@@ -44,8 +44,9 @@ void setup() {
   Serial.begin(115200);
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Info);
 
-  // initiseer sd-kaart
-  if (!SD.begin(SD_CS)) {
+  // faster SD: init SPI and use higher clock to speed up file opens/reads (ESP32)
+  SPI.begin(); // default pins op ESP32; verandert niet voor andere boards
+  if (!SD.begin(SD_CS, SPI, 80000000UL)) { // 80 MHz
     Serial.println("Card failed, or not present");
     while (1);
   }
@@ -91,6 +92,18 @@ void setup() {
     playerPtr->setMetadataCallback(printMetaData);
     // playerPtr->begin(); // start pas bij knopdruk
   }
+
+  // --- PRIMING: initialise decoder/I2S en warm SD-cache zodat later starten sneller gaat ---
+  // korte begin() -> end() initialiseert intern geheugen/buffers van de player/decoder
+  playerPtr->begin();
+  delay(200);          // korte tijd geven om buffers op te bouwen
+  playerPtr->end();
+
+  // optioneel: open mp3-bestanden kort om SD-filesystems cache warm te maken
+  File f = SD.open("/chelsey.mp3", FILE_READ);
+  if (f) f.close();
+  f = SD.open("/VINTAGE95.mp3", FILE_READ);
+  if (f) f.close();
 }
 
 void loop() {
