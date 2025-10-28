@@ -30,7 +30,20 @@ void printMetaData(MetaDataType type, const char* str, int len){
   Serial.print("==> ");
   Serial.print(toStr(type));
   Serial.print(": ");
-  Serial.println(str);
+
+  if (!str || len <= 0) {
+    Serial.println();
+    return;
+  }
+
+  // veilig kopiëren en null-termineren om crashes te voorkomen
+  const int MAX_MD = 128;
+  int n = len;
+  if (n > MAX_MD) n = MAX_MD;
+  static char buf[MAX_MD + 1];
+  memcpy(buf, str, n);
+  buf[n] = '\0';
+  Serial.println(buf);
 }
 
 // Maak een tweede seriële poort aan voor het schermpje
@@ -89,8 +102,7 @@ void setup() {
   }
   if (!playerPtr) {
     playerPtr = new AudioPlayer(*currentSourcePtr, i2s, decoder);
-    playerPtr->setMetadataCallback(printMetaData);
-    // playerPtr->begin(); // start pas bij knopdruk
+    playerPtr->setMetadataCallback(nullptr); // disable metadata callback to avoid crashes
   }
 
   // --- PRIMING: initialise decoder/I2S en warm SD-cache zodat later starten sneller gaat ---
@@ -114,20 +126,15 @@ void loop() {
 
   // --- knop 13 (chelsey) ---
   if (pressed13 && !wasPressed13) {
-    if (!SD.exists("/chelsey.mp3")) {
-      Serial.println("chelsey.mp3 NIET gevonden!");
-    } else {
-      Serial.println("chelsey.mp3 gevonden!");
-      // zet filter zodat de AudioSourceSD het juiste bestand opent
-      currentSourcePtr->setFileFilter("chelsey.mp3"); // of "*chelsey*" als wildcard gewenst
-      playerPtr->begin();
-      currentTrack = 0;
-      playStartTime = millis();
-    }
+    playerPtr->end(); // Stop direct, ook als andere sample speelt
+    currentSourcePtr->setFileFilter("chelsey.mp3");
+    playerPtr->begin();
+    currentTrack = 0;
+    playStartTime = millis();
   }
   if (!pressed13 && wasPressed13) {
     playerPtr->end();
-    currentSourcePtr->setFileFilter(""); // reset filter
+    currentSourcePtr->setFileFilter("");
     playStartTime = 0;
     currentTrack = -1;
   }
@@ -135,15 +142,11 @@ void loop() {
 
   // --- knop 4 (VINTAGE95) ---
   if (pressed4 && !wasPressed4) {
-    if (!SD.exists("/VINTAGE95.mp3")) {
-      Serial.println("VINTAGE95.mp3 NIET gevonden!");
-    } else {
-      Serial.println("VINTAGE95.mp3 gevonden!");
-      currentSourcePtr->setFileFilter("VINTAGE95.mp3");
-      playerPtr->begin();
-      currentTrack = 1;
-      playStartTime = millis();
-    }
+    playerPtr->end();
+    currentSourcePtr->setFileFilter("VINTAGE95.mp3");
+    playerPtr->begin();
+    currentTrack = 1;
+    playStartTime = millis();
   }
   if (!pressed4 && wasPressed4) {
     playerPtr->end();
