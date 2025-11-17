@@ -7,43 +7,12 @@
 #include "AudioTools/Disk/AudioSourceSD.h"      // SD-kaart audio bron
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h" // MP3 decoder
 
-// Audio output stream via I2S (Inter-IC Sound protocol)
+const char *startFilePath="/";
+const char* ext="mp3";
+AudioSourceSD source(startFilePath, ext);
 I2SStream i2s;
-// MP3 decoder object voor het decoderen van MP3 bestanden
 MP3DecoderHelix decoder;
-
-
-/**
- * Callback functie voor het afdrukken van metadata van audio bestanden
- * 
- * @param type Het type metadata (bijv. titel, artiest, album)
- * @param str Pointer naar de metadata string
- * @param len Lengte van de metadata string
- */
-void printMetaData(MetaDataType type, const char* str, int len){
-  // Print metadata type indicator
-  Serial.print("==> ");
-  Serial.print(toStr(type));
-  Serial.print(": ");
-
-  // Controleer of de string geldig is
-  if (!str || len <= 0) {
-    Serial.println();
-    return;
-  }
-
-  // Maximale lengte voor metadata buffer
-  const int MAX_MD = 128;
-  int n = len;
-  if (n > MAX_MD) n = MAX_MD;
-  
-  // Tijdelijke buffer voor metadata string
-  static char buf[MAX_MD + 1];
-  memcpy(buf, str, n);
-  buf[n] = '\0';  // Null-terminator toevoegen
-  Serial.println(buf);
-}
-
+AudioPlayer player(source, i2s, decoder);
 
 // Maak een OLED display object aan (128x64 pixels, I2C, geen reset pin)
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
@@ -51,69 +20,137 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 // Chip Select pin voor de SD-kaart module
 const int SD_CS = 5;
 
+// Task handle voor display thread
+TaskHandle_t displayTaskHandle = NULL;
+
+// Gedeelde variabelen voor display (thread-safe met mutex)
+SemaphoreHandle_t displayMutex;
+String currentFile = "";
+bool isPlaying = false;
+
 /**
- * Setup functie - wordt één keer uitgevoerd bij opstarten
- * Initialiseert alle hardware componenten en periferie
+ * Display update task - draait in aparte thread
+ * Houdt het display up-to-date zonder audio te verstoren
  */
-void setup() {
-  // Configureer GPIO pinnen als input met pull-up weerstanden
-  pinMode(13, INPUT_PULLUP);  // Knop 1 (voor bediening)
-  pinMode(4, INPUT_PULLUP);   // Knop 2 (voor bediening)
+void displayTask(void * parameter) {
+  for(;;) {
+    // Neem mutex om veilig gedeelde data te lezen
+    if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
+      display.clearDisplay();
+      display.setCursor(0, 0);
+      
+      // Toon status
+      display.print("Status: ");
+      display.println(isPlaying ? "Playing" : "Stopped");
+      
+      // Toon huidig bestand
+      display.setCursor(0, 16);
+      display.print("File: ");
+      display.println(currentFile);
+      
+      display.display();
+      
+      xSemaphoreGive(displayMutex);
+    }
+    
+    // Update display elke 100ms
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+void printMetaData(MetaDataType type, const char* str, int len){
+  Serial.print("==> ");
+  Serial.print(toStr(type));
+  Serial.print(": ");
+
+  if (!str || len <= 0) {
+    Serial.println();
+    return;
+  }
+
+  const int MAX_MD = 128;
+  int n = len;
+  if (n > MAX_MD) n = MAX_MD;
   
-  // Start seriële communicatie voor debugging
+  static char buf[MAX_MD + 1];
+  memcpy(buf, str, n);
+  buf[n] = '\0';
+  Serial.println(buf);
+  
+  // Update display info (thread-safe)
+  if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
+    if(type == Title) {
+      currentFile = String(buf);
+    }
+    xSemaphoreGive(displayMutex);
+  }
+}
+
+void setup() {
+  pinMode(13, INPUT_PULLUP);
+  pinMode(4, INPUT_PULLUP);
+  
   Serial.begin(115200);
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Info);
 
-  // Initialiseer SPI bus en SD-kaart met hogere kloksnelheid (80 MHz) voor snellere toegang
-  SPI.begin(); // Gebruikt standaard pinnen op ESP32
-  if (!SD.begin(SD_CS, SPI, 80000000UL)) { // 80 MHz klokfrequentie
+  SPI.begin();
+  if (!SD.begin(SD_CS, SPI, 80000000UL)) {
     Serial.println("Card failed, or not present");
-    while (1); // Blijf hangen als SD-kaart niet gevonden wordt
+    while (1);
   }
 
-  // Initialiseer het OLED display op I2C adres 0x3C
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
-    for(;;); // Blijf hangen als display initialisatie mislukt
+    for(;;);
   }
 
-  // Configureer display instellingen
-  display.clearDisplay();              // Wis het display buffer
-  display.setTextSize(1);              // Tekst grootte 1 (6x8 pixels per karakter)
-  display.setTextColor(SSD1306_WHITE); // Witte tekst op zwarte achtergrond
-  display.setCursor(0, 0);             // Start cursor linksboven
-
-  // Lees en toon bestanden van de SD-kaart op het display
-  File root = SD.open("/");
-  int y = 0;  // Y-positie teller voor regels
-  while (true) {
-    File entry = root.openNextFile();
-    if (!entry) break;  // Stop als er geen bestanden meer zijn
-    
-    display.setCursor(0, y * 8);  // Zet cursor (8 pixels per regel)
-    display.println(entry.name()); // Toon bestandsnaam
-    entry.close();
-    y++;
-    if (y > 7) break;  // Maximaal 8 regels (64 pixels / 8 pixels per regel)
-  }
-  display.display();  // Verstuur buffer naar het display
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Initializing...");
+  display.display();
 
   // Configureer I2S audio output
   auto cfg = i2s.defaultConfig(TX_MODE);
-  cfg.pin_bck = 14;   // Bit Clock (BCLK) pin
-  cfg.pin_ws  = 15;   // Word Select / Left-Right Clock (LRCK) pin
-  cfg.pin_data = 32;  // Data In (DIN) pin
-  i2s.begin(cfg);     // Start I2S interface
+  cfg.pin_bck = 14;
+  cfg.pin_ws  = 15;
+  cfg.pin_data = 32;
+  i2s.begin(cfg);
+  
+  // Metadata callback registreren
+  player.setMetadataCallback(printMetaData);
+  player.begin();
 
+  // Creëer mutex voor thread-safe display updates
+  displayMutex = xSemaphoreCreateMutex();
+  
+  // Start display task op core 0 (audio blijft op core 1)
+  xTaskCreatePinnedToCore(
+    displayTask,          // Task functie
+    "DisplayTask",        // Task naam
+    4096,                 // Stack size
+    NULL,                 // Parameters
+    1,                    // Priority (lager dan audio)
+    &displayTaskHandle,   // Task handle
+    0                     // Core 0 (audio op core 1)
+  );
+  
+  Serial.println("Setup complete");
 }
 
-/**
- * Loop functie - wordt continu herhaald na setup()
- * Hier komt de hoofdlogica voor het afspelen van samples
- */
 void loop() {
-  // TODO: Implementeer sample playback logica
-  // - Lees knopinput (GPIO 13 en 4)
-  // - Speel corresponderende MP3 samples af
-  // - Update display met huidige status
+  // Audio playback op core 1
+  player.copy();
+  
+  // Update playing status (thread-safe)
+  static bool lastPlayingState = false;
+  bool currentPlayingState = player.isActive();
+  if(currentPlayingState != lastPlayingState) {
+    if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
+      isPlaying = currentPlayingState;
+      xSemaphoreGive(displayMutex);
+    }
+    lastPlayingState = currentPlayingState;
+  }
 }
