@@ -7,6 +7,7 @@
 #include "AudioTools/Disk/AudioSourceSD.h"      // SD-kaart audio bron
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h" // MP3 decoder
 #include <ScopeI2SStream.h>         // Custom I2S stream met scope functionaliteit
+#include <ScopeDisplay.h>           // OLED scope display manager
 
 const char *startFilePath="/";
 const char* ext="mp3";
@@ -15,89 +16,19 @@ I2SStream i2s;
 MP3DecoderHelix decoder;
 AudioPlayer player(source, i2s, decoder);
 
-// Maak een OLED display object aan (128x64 pixels, I2C, geen reset pin)
-Adafruit_SSD1306 display(128, 64, &Wire, -1);
-
 // Chip Select pin voor de SD-kaart module
 const int SD_CS = 5;
 
-// Task handle voor display thread
-TaskHandle_t displayTaskHandle = NULL;
-
-// Gedeelde variabelen voor display (thread-safe met mutex)
-SemaphoreHandle_t displayMutex;
-String currentFile = "";
-bool isPlaying = false;
-
-
-// Waveform buffer voor scope display
+// Display en waveform setup
+Adafruit_SSD1306 display(128, 64, &Wire, -1);
 int16_t waveformBuffer[WAVEFORM_SAMPLES];
 int waveformIndex = 0;
 
-// Maak ScopeI2SStream met verwijzingen naar buffer en mutex
-ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, &displayMutex);
+// Scope display manager
+ScopeDisplay scopeDisplay(&display, waveformBuffer, &waveformIndex);
 
-
-/**
- * Display update task - draait in aparte thread
- * Toont waveform als oscilloscope
- */
-void displayTask(void * parameter) {
-  for(;;) {
-    // Neem mutex om veilig gedeelde data te lezen
-    if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
-      display.clearDisplay();
-      
-      // Titel sectie (bovenste 12 pixels)
-      display.setTextSize(1);
-      display.setCursor(0, 0);
-      display.print(isPlaying ? ">" : "||");
-      display.print(" ");
-      
-      // Toon bestandsnaam (verkort als te lang)
-      String shortName = currentFile;
-      if(shortName.length() > 18) {
-        shortName = shortName.substring(0, 15) + "...";
-      }
-      display.println(shortName);
-      
-      // Horizontale lijn
-      display.drawLine(0, 11, 127, 11, SSD1306_WHITE);
-      
-      // Waveform scope (rest van display: 12-63 = 52 pixels hoog)
-      const int scopeTop = 12;
-      const int scopeHeight = 52;
-      const int scopeCenter = scopeTop + scopeHeight / 2;
-      
-      // Teken middenlijn (0V referentie)
-      for(int x = 0; x < 128; x += 4) {
-        display.drawPixel(x, scopeCenter, SSD1306_WHITE);
-      }
-      
-      // Teken waveform
-      for(int x = 0; x < WAVEFORM_SAMPLES - 1; x++) {
-        // Schaal 16-bit audio sample naar display pixels
-        // -32768 to +32767 -> -26 to +26 pixels
-        int y1 = scopeCenter - (waveformBuffer[x] * scopeHeight / 2 / 32768);
-        int y2 = scopeCenter - (waveformBuffer[x+1] * scopeHeight / 2 / 32768);
-        
-        // Begrens binnen display
-        y1 = constrain(y1, scopeTop, scopeTop + scopeHeight - 1);
-        y2 = constrain(y2, scopeTop, scopeTop + scopeHeight - 1);
-        
-        // Teken lijn tussen samples
-        display.drawLine(x, y1, x+1, y2, SSD1306_WHITE);
-      }
-      
-      display.display();
-      
-      xSemaphoreGive(displayMutex);
-    }
-    
-    // Update display elke 50ms voor vloeiende scope
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-  }
-}
+// Scope I2S stream (gebruikt display mutex voor thread-safety)
+ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, scopeDisplay.getMutex());
 
 void printMetaData(MetaDataType type, const char* str, int len){
   Serial.print("==> ");
@@ -118,12 +49,9 @@ void printMetaData(MetaDataType type, const char* str, int len){
   buf[n] = '\0';
   Serial.println(buf);
   
-  // Update display info (thread-safe)
-  if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
-    if(type == Title) {
-      currentFile = String(buf);
-    }
-    xSemaphoreGive(displayMutex);
+  // Update display titel via ScopeDisplay
+  if(type == Title) {
+    scopeDisplay.setFilename(String(buf));
   }
 }
 
@@ -140,20 +68,11 @@ void setup() {
     while (1);
   }
 
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+  // Initialiseer scope display
+  if(!scopeDisplay.begin(0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
     for(;;);
   }
-
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
-  display.println("Initializing...");
-  display.display();
-
-  // Creëer mutex VOOR we audio starten
-  displayMutex = xSemaphoreCreateMutex();
 
   // Configureer I2S audio output met scope stream
   auto cfg = scopeI2s.defaultConfig(TX_MODE);
@@ -169,17 +88,6 @@ void setup() {
   player.setMetadataCallback(printMetaData);
   player.begin();
   
-  // Start display task op core 0 (audio blijft op core 1)
-  xTaskCreatePinnedToCore(
-    displayTask,          // Task functie
-    "DisplayTask",        // Task naam
-    4096,                 // Stack size
-    NULL,                 // Parameters
-    1,                    // Priority (lager dan audio)
-    &displayTaskHandle,   // Task handle
-    0                     // Core 0 (audio op core 1)
-  );
-  
   Serial.println("Setup complete");
 }
 
@@ -187,7 +95,7 @@ void loop() {
   // Audio playback op core 1
   player.copy();
   
-  // Update playing status EN bestandsnaam (thread-safe)
+  // Update playing status EN bestandsnaam
   static bool lastPlayingState = false;
   static String lastFileName = "";
   
@@ -195,23 +103,26 @@ void loop() {
   String currentFileName = source.toStr();  // Haal huidige bestandsnaam op
   
   if(currentPlayingState != lastPlayingState || currentFileName != lastFileName) {
-    if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
-      isPlaying = currentPlayingState;
-      
-      // Update bestandsnaam (verwijder pad, houd alleen filename)
-      if(currentFileName != lastFileName) {
-        int lastSlash = currentFileName.lastIndexOf('/');
-        if(lastSlash >= 0) {
-          currentFile = currentFileName.substring(lastSlash + 1);
-        } else {
-          currentFile = currentFileName;
-        }
-        // Verwijder .mp3 extensie
-        currentFile.replace(".mp3", "");
-      }
-      
-      xSemaphoreGive(displayMutex);
+    // Update playing status
+    if(currentPlayingState != lastPlayingState) {
+      scopeDisplay.setPlaying(currentPlayingState);
     }
+    
+    // Update bestandsnaam (verwijder pad, houd alleen filename)
+    if(currentFileName != lastFileName) {
+      int lastSlash = currentFileName.lastIndexOf('/');
+      String displayName;
+      if(lastSlash >= 0) {
+        displayName = currentFileName.substring(lastSlash + 1);
+      } else {
+        displayName = currentFileName;
+      }
+      // Verwijder .mp3 extensie
+      displayName.replace(".mp3", "");
+      
+      scopeDisplay.setFilename(displayName);
+    }
+    
     lastPlayingState = currentPlayingState;
     lastFileName = currentFileName;
   }
