@@ -1,181 +1,119 @@
-#include <SPI.h>
-#include <SD.h>
-#include <Adafruit_SSD1306.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <AudioTools.h>
-#include "AudioTools/Disk/AudioSourceSD.h"
-#include "AudioTools/AudioCodecs/CodecMP3Helix.h"
+#include <SPI.h>                    // SPI communicatie voor SD-kaart
+#include <SD.h>                     // SD-kaart functionaliteit
+#include <Adafruit_SSD1306.h>       // OLED display driver
+#include <Wire.h>                   // I2C communicatie voor display
+#include <Adafruit_GFX.h>           // Grafische functies voor display
+#include <AudioTools.h>             // Audio verwerking bibliotheek
+#include "AudioTools/Disk/AudioSourceSD.h"      // SD-kaart audio bron
+#include "AudioTools/AudioCodecs/CodecMP3Helix.h" // MP3 decoder
 
-const int BUTTON_PIN13 = 13;
-bool wasPressed13 = false;
-
-const int BUTTON_PIN4 = 4;
-bool wasPressed4 = false;
-
-
-const char* ext = "mp3";
+// Audio output stream via I2S (Inter-IC Sound protocol)
 I2SStream i2s;
+// MP3 decoder object voor het decoderen van MP3 bestanden
 MP3DecoderHelix decoder;
 
-AudioPlayer* playerPtr = nullptr; // Gebruik een pointer
-AudioSourceSD* currentSourcePtr = nullptr; // hou de actieve bron bij
 
-int currentTrack = -1; // -1 means no track selected
-
-unsigned long lastDisplayUpdate = 0;
-unsigned long playStartTime = 0;
-
+/**
+ * Callback functie voor het afdrukken van metadata van audio bestanden
+ * 
+ * @param type Het type metadata (bijv. titel, artiest, album)
+ * @param str Pointer naar de metadata string
+ * @param len Lengte van de metadata string
+ */
 void printMetaData(MetaDataType type, const char* str, int len){
+  // Print metadata type indicator
   Serial.print("==> ");
   Serial.print(toStr(type));
   Serial.print(": ");
 
+  // Controleer of de string geldig is
   if (!str || len <= 0) {
     Serial.println();
     return;
   }
 
-  // veilig kopiëren en null-termineren om crashes te voorkomen
+  // Maximale lengte voor metadata buffer
   const int MAX_MD = 128;
   int n = len;
   if (n > MAX_MD) n = MAX_MD;
+  
+  // Tijdelijke buffer voor metadata string
   static char buf[MAX_MD + 1];
   memcpy(buf, str, n);
-  buf[n] = '\0';
+  buf[n] = '\0';  // Null-terminator toevoegen
   Serial.println(buf);
 }
 
-// Maak een tweede seriële poort aan voor het schermpje
+
+// Maak een OLED display object aan (128x64 pixels, I2C, geen reset pin)
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
-const int SD_CS = 5; // Chip select pin voor de SD-kaart
+// Chip Select pin voor de SD-kaart module
+const int SD_CS = 5;
 
+/**
+ * Setup functie - wordt één keer uitgevoerd bij opstarten
+ * Initialiseert alle hardware componenten en periferie
+ */
 void setup() {
-  pinMode(BUTTON_PIN13, INPUT_PULLUP);
-  pinMode(BUTTON_PIN4, INPUT_PULLUP);
+  // Configureer GPIO pinnen als input met pull-up weerstanden
+  pinMode(13, INPUT_PULLUP);  // Knop 1 (voor bediening)
+  pinMode(4, INPUT_PULLUP);   // Knop 2 (voor bediening)
+  
+  // Start seriële communicatie voor debugging
   Serial.begin(115200);
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Info);
 
-  // faster SD: init SPI and use higher clock to speed up file opens/reads (ESP32)
-  SPI.begin(); // default pins op ESP32; verandert niet voor andere boards
-  if (!SD.begin(SD_CS, SPI, 80000000UL)) { // 80 MHz
+  // Initialiseer SPI bus en SD-kaart met hogere kloksnelheid (80 MHz) voor snellere toegang
+  SPI.begin(); // Gebruikt standaard pinnen op ESP32
+  if (!SD.begin(SD_CS, SPI, 80000000UL)) { // 80 MHz klokfrequentie
     Serial.println("Card failed, or not present");
-    while (1);
+    while (1); // Blijf hangen als SD-kaart niet gevonden wordt
   }
 
-  // initialiseer het scherm - DIT MOET VÓÓR display.clearDisplay()!
+  // Initialiseer het OLED display op I2C adres 0x3C
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
-    for(;;);
+    for(;;); // Blijf hangen als display initialisatie mislukt
   }
 
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
+  // Configureer display instellingen
+  display.clearDisplay();              // Wis het display buffer
+  display.setTextSize(1);              // Tekst grootte 1 (6x8 pixels per karakter)
+  display.setTextColor(SSD1306_WHITE); // Witte tekst op zwarte achtergrond
+  display.setCursor(0, 0);             // Start cursor linksboven
 
+  // Lees en toon bestanden van de SD-kaart op het display
   File root = SD.open("/");
-  int y = 0;
+  int y = 0;  // Y-positie teller voor regels
   while (true) {
     File entry = root.openNextFile();
-    if (!entry) break;
-    display.setCursor(0, y * 8);
-    display.println(entry.name());
+    if (!entry) break;  // Stop als er geen bestanden meer zijn
+    
+    display.setCursor(0, y * 8);  // Zet cursor (8 pixels per regel)
+    display.println(entry.name()); // Toon bestandsnaam
     entry.close();
     y++;
-    if (y > 7) break; // maximaal 8 regels
+    if (y > 7) break;  // Maximaal 8 regels (64 pixels / 8 pixels per regel)
   }
-  display.display();
+  display.display();  // Verstuur buffer naar het display
 
-  // setup output
+  // Configureer I2S audio output
   auto cfg = i2s.defaultConfig(TX_MODE);
-  cfg.pin_bck = 14;   // BCLK
-  cfg.pin_ws  = 15;   // WSEL/LRCK
-  cfg.pin_data = 32;  // DIN
-  i2s.begin(cfg);
+  cfg.pin_bck = 14;   // Bit Clock (BCLK) pin
+  cfg.pin_ws  = 15;   // Word Select / Left-Right Clock (LRCK) pin
+  cfg.pin_data = 32;  // Data In (DIN) pin
+  i2s.begin(cfg);     // Start I2S interface
 
-  // setup player - maak 1 AudioSourceSD voor de hele SD en 1 AudioPlayer die die source gebruikt
-  // (maak deze pas nadat SD.begin en i2s.begin zijn gedaan)
-  if (!currentSourcePtr) {
-    currentSourcePtr = new AudioSourceSD("/", ext);    // doorzoekt root naar .mp3 bestanden
-  }
-  if (!playerPtr) {
-    playerPtr = new AudioPlayer(*currentSourcePtr, i2s, decoder);
-    playerPtr->setMetadataCallback(nullptr); // disable metadata callback to avoid crashes
-  }
-
-  // --- PRIMING: initialise decoder/I2S en warm SD-cache zodat later starten sneller gaat ---
-  // korte begin() -> end() initialiseert intern geheugen/buffers van de player/decoder
-  playerPtr->begin();
-  delay(200);          // korte tijd geven om buffers op te bouwen
-  playerPtr->end();
-
-  // optioneel: open mp3-bestanden kort om SD-filesystems cache warm te maken
-  File f = SD.open("/chelsey.mp3", FILE_READ);
-  if (f) f.close();
-  f = SD.open("/VINTAGE95.mp3", FILE_READ);
-  if (f) f.close();
 }
 
+/**
+ * Loop functie - wordt continu herhaald na setup()
+ * Hier komt de hoofdlogica voor het afspelen van samples
+ */
 void loop() {
-  if (playerPtr) playerPtr->copy();
-
-  bool pressed13 = digitalRead(BUTTON_PIN13) == LOW;
-  bool pressed4 = digitalRead(BUTTON_PIN4) == LOW;
-
-  // --- knop 13 (chelsey) ---
-  if (pressed13 && !wasPressed13) {
-    playerPtr->end(); // Stop direct, ook als andere sample speelt
-    currentSourcePtr->setFileFilter("chelsey.mp3");
-    playerPtr->begin();
-    currentTrack = 0;
-    playStartTime = millis();
-  }
-  if (!pressed13 && wasPressed13) {
-    playerPtr->end();
-    currentSourcePtr->setFileFilter("");
-    playStartTime = 0;
-    currentTrack = -1;
-  }
-  wasPressed13 = pressed13;
-
-  // --- knop 4 (VINTAGE95) ---
-  if (pressed4 && !wasPressed4) {
-    playerPtr->end();
-    currentSourcePtr->setFileFilter("VINTAGE95.mp3");
-    playerPtr->begin();
-    currentTrack = 1;
-    playStartTime = millis();
-  }
-  if (!pressed4 && wasPressed4) {
-    playerPtr->end();
-    currentSourcePtr->setFileFilter("");
-    playStartTime = 0;
-    currentTrack = -1;
-  }
-  wasPressed4 = pressed4;
-
-  // Display update (ongewijzigd)
-  if (millis() - lastDisplayUpdate > 1000) {
-    display.clearDisplay();
-    display.setCursor(0, 0);
-
-    if (playerPtr && playerPtr->isActive()) {
-      display.println("Speelt af...");
-      display.print("Track: ");
-      display.println(currentTrack == 0 ? "chelsey.mp3" : currentTrack == 1 ? "VINTAGE95.mp3" : "-");
-      unsigned long elapsed = (millis() - playStartTime) / 1000;
-      display.print("Tijd: ");
-      display.print(elapsed);
-      display.println("s");
-    } else {
-      display.println("Gestopt");
-      display.println("Tijd: 0s");
-      display.print("Track: -");
-    }
-
-    display.display();
-    lastDisplayUpdate = millis();
-  }
+  // TODO: Implementeer sample playback logica
+  // - Lees knopinput (GPIO 13 en 4)
+  // - Speel corresponderende MP3 samples af
+  // - Update display met huidige status
 }
