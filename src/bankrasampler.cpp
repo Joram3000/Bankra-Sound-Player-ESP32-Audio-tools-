@@ -28,33 +28,97 @@ SemaphoreHandle_t displayMutex;
 String currentFile = "";
 bool isPlaying = false;
 
+// Waveform buffer voor scope display
+#define WAVEFORM_SAMPLES 128  // Aantal samples (= display breedte)
+int16_t waveformBuffer[WAVEFORM_SAMPLES];
+int waveformIndex = 0;
+
+/**
+ * Custom output stream die samples captured voor waveform display
+ */
+class ScopeI2SStream : public I2SStream {
+  public:
+    size_t write(const uint8_t *data, size_t len) override {
+      // Capture samples voor waveform (elke N samples om te downsamplen)
+      static int sampleCounter = 0;
+      const int16_t* samples = (const int16_t*)data;
+      int numSamples = len / sizeof(int16_t);
+      
+      for(int i = 0; i < numSamples; i += 2) {  // Skip om te downsamplen
+        if(sampleCounter++ % 16 == 0) {  // Neem 1 van elke 16 samples
+          if(xSemaphoreTake(displayMutex, 0)) {  // Non-blocking
+            waveformBuffer[waveformIndex] = samples[i];  // Links kanaal
+            waveformIndex = (waveformIndex + 1) % WAVEFORM_SAMPLES;
+            xSemaphoreGive(displayMutex);
+          }
+        }
+      }
+      
+      // Schrijf data naar I2S hardware
+      return I2SStream::write(data, len);
+    }
+};
+
+ScopeI2SStream scopeI2s;
+
 /**
  * Display update task - draait in aparte thread
- * Houdt het display up-to-date zonder audio te verstoren
+ * Toont waveform als oscilloscope
  */
 void displayTask(void * parameter) {
   for(;;) {
     // Neem mutex om veilig gedeelde data te lezen
     if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
       display.clearDisplay();
+      
+      // Titel sectie (bovenste 12 pixels)
+      display.setTextSize(1);
       display.setCursor(0, 0);
+      display.print(isPlaying ? ">" : "||");
+      display.print(" ");
       
-      // Toon status
-      display.print("Status: ");
-      display.println(isPlaying ? "Playing" : "Stopped");
+      // Toon bestandsnaam (verkort als te lang)
+      String shortName = currentFile;
+      if(shortName.length() > 18) {
+        shortName = shortName.substring(0, 15) + "...";
+      }
+      display.println(shortName);
       
-      // Toon huidig bestand
-      display.setCursor(0, 16);
-      display.print("File: ");
-      display.println(currentFile);
+      // Horizontale lijn
+      display.drawLine(0, 11, 127, 11, SSD1306_WHITE);
+      
+      // Waveform scope (rest van display: 12-63 = 52 pixels hoog)
+      const int scopeTop = 12;
+      const int scopeHeight = 52;
+      const int scopeCenter = scopeTop + scopeHeight / 2;
+      
+      // Teken middenlijn (0V referentie)
+      for(int x = 0; x < 128; x += 4) {
+        display.drawPixel(x, scopeCenter, SSD1306_WHITE);
+      }
+      
+      // Teken waveform
+      for(int x = 0; x < WAVEFORM_SAMPLES - 1; x++) {
+        // Schaal 16-bit audio sample naar display pixels
+        // -32768 to +32767 -> -26 to +26 pixels
+        int y1 = scopeCenter - (waveformBuffer[x] * scopeHeight / 2 / 32768);
+        int y2 = scopeCenter - (waveformBuffer[x+1] * scopeHeight / 2 / 32768);
+        
+        // Begrens binnen display
+        y1 = constrain(y1, scopeTop, scopeTop + scopeHeight - 1);
+        y2 = constrain(y2, scopeTop, scopeTop + scopeHeight - 1);
+        
+        // Teken lijn tussen samples
+        display.drawLine(x, y1, x+1, y2, SSD1306_WHITE);
+      }
       
       display.display();
       
       xSemaphoreGive(displayMutex);
     }
     
-    // Update display elke 100ms
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    // Update display elke 50ms voor vloeiende scope
+    vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
 
@@ -111,19 +175,22 @@ void setup() {
   display.println("Initializing...");
   display.display();
 
-  // Configureer I2S audio output
-  auto cfg = i2s.defaultConfig(TX_MODE);
+  // Creëer mutex VOOR we audio starten
+  displayMutex = xSemaphoreCreateMutex();
+
+  // Configureer I2S audio output met scope stream
+  auto cfg = scopeI2s.defaultConfig(TX_MODE);
   cfg.pin_bck = 14;
   cfg.pin_ws  = 15;
   cfg.pin_data = 32;
-  i2s.begin(cfg);
+  scopeI2s.begin(cfg);
+  
+  // Gebruik scopeI2s in plaats van i2s
+  player.setOutput(scopeI2s);
   
   // Metadata callback registreren
   player.setMetadataCallback(printMetaData);
   player.begin();
-
-  // Creëer mutex voor thread-safe display updates
-  displayMutex = xSemaphoreCreateMutex();
   
   // Start display task op core 0 (audio blijft op core 1)
   xTaskCreatePinnedToCore(
@@ -143,14 +210,32 @@ void loop() {
   // Audio playback op core 1
   player.copy();
   
-  // Update playing status (thread-safe)
+  // Update playing status EN bestandsnaam (thread-safe)
   static bool lastPlayingState = false;
+  static String lastFileName = "";
+  
   bool currentPlayingState = player.isActive();
-  if(currentPlayingState != lastPlayingState) {
+  String currentFileName = source.toStr();  // Haal huidige bestandsnaam op
+  
+  if(currentPlayingState != lastPlayingState || currentFileName != lastFileName) {
     if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
       isPlaying = currentPlayingState;
+      
+      // Update bestandsnaam (verwijder pad, houd alleen filename)
+      if(currentFileName != lastFileName) {
+        int lastSlash = currentFileName.lastIndexOf('/');
+        if(lastSlash >= 0) {
+          currentFile = currentFileName.substring(lastSlash + 1);
+        } else {
+          currentFile = currentFileName;
+        }
+        // Verwijder .mp3 extensie
+        currentFile.replace(".mp3", "");
+      }
+      
       xSemaphoreGive(displayMutex);
     }
     lastPlayingState = currentPlayingState;
+    lastFileName = currentFileName;
   }
 }
