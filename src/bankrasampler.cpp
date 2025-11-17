@@ -6,6 +6,7 @@
 #include <AudioTools.h>             // Audio verwerking bibliotheek
 #include "AudioTools/Disk/AudioSourceSD.h"      // SD-kaart audio bron
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h" // MP3 decoder
+#include <ScopeI2SStream.h>         // Custom I2S stream met scope functionaliteit
 
 const char *startFilePath="/";
 const char* ext="mp3";
@@ -28,38 +29,14 @@ SemaphoreHandle_t displayMutex;
 String currentFile = "";
 bool isPlaying = false;
 
+
 // Waveform buffer voor scope display
-#define WAVEFORM_SAMPLES 128  // Aantal samples (= display breedte)
 int16_t waveformBuffer[WAVEFORM_SAMPLES];
 int waveformIndex = 0;
 
-/**
- * Custom output stream die samples captured voor waveform display
- */
-class ScopeI2SStream : public I2SStream {
-  public:
-    size_t write(const uint8_t *data, size_t len) override {
-      // Capture samples voor waveform (elke N samples om te downsamplen)
-      static int sampleCounter = 0;
-      const int16_t* samples = (const int16_t*)data;
-      int numSamples = len / sizeof(int16_t);
-      
-      for(int i = 0; i < numSamples; i += 2) {  // Skip om te downsamplen
-        if(sampleCounter++ % 16 == 0) {  // Neem 1 van elke 16 samples
-          if(xSemaphoreTake(displayMutex, 0)) {  // Non-blocking
-            waveformBuffer[waveformIndex] = samples[i];  // Links kanaal
-            waveformIndex = (waveformIndex + 1) % WAVEFORM_SAMPLES;
-            xSemaphoreGive(displayMutex);
-          }
-        }
-      }
-      
-      // Schrijf data naar I2S hardware
-      return I2SStream::write(data, len);
-    }
-};
+// Maak ScopeI2SStream met verwijzingen naar buffer en mutex
+ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, &displayMutex);
 
-ScopeI2SStream scopeI2s;
 
 /**
  * Display update task - draait in aparte thread
