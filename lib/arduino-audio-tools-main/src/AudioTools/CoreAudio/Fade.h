@@ -21,6 +21,7 @@ public:
       volume = 0.0;
       is_fade_out = false;
       is_done = false;
+      resetFadeSamples();
     }
   }
 
@@ -32,10 +33,17 @@ public:
       volume = 1.0;
       is_fade_in = false;
       is_done = false;
+      resetFadeSamples();
     }
   }
 
   bool isFadeOutActive() { return is_fade_out; }
+
+  void setFadeSamples(uint32_t samples) {
+    fade_length_samples = samples;
+    fade_samples_remaining = samples;
+    fade_delta = samples > 0 ? 1.0f / static_cast<float>(samples) : 0.0f;
+  }
 
   /// @brief Updates the amplitude of the data when a fade in or fade out has
   /// been requested
@@ -74,13 +82,18 @@ protected:
   int channels = 2;
   float volume = 1.0;
   bool is_done = false;
+  uint32_t fade_length_samples = 0;
+  uint32_t fade_samples_remaining = 0;
+  float fade_delta = 0.0f;
 
   template <typename T> void convertFrames(T *data, int frames, int channels) {
-    float delta = 1.0 / frames;
+    if (frames <= 0) {
+      return;
+    }
+    float delta = hasCustomFade() ? fade_delta : 1.0f / static_cast<float>(frames);
     // handle fade out
     if (is_fade_in) {
       fadeIn<T>(data, frames, channels, delta);
-      is_fade_in = false;
     }  else if (is_fade_out) {
       fadeOut<T>(data, frames, channels, delta);
     }
@@ -91,35 +104,67 @@ protected:
 
   template <typename T>
   void fadeOut(T *data, int frames, int channels, float delta) {
+    bool custom = hasCustomFade();
     for (int j = 0; j < frames; j++) {
       for (int ch = 0; ch < channels; ch++) {
         data[j * channels + ch] = data[j * channels + ch] * volume;
-        if (volume > 0) {
-          volume -= delta;
-          if (volume < 0) {
-            volume = 0;
+        if (!custom || fade_samples_remaining > 0) {
+          if (volume > 0) {
+            volume -= delta;
+            if (volume < 0) {
+              volume = 0;
+            }
+          }
+          if (custom && fade_samples_remaining > 0) {
+            fade_samples_remaining--;
+            if (fade_samples_remaining == 0) {
+              is_fade_out = false;
+            }
           }
         }
       }
     }
-    is_fade_out = false;
+    if (!custom) {
+      is_fade_out = false;
+    } else if (!is_fade_out) {
+      volume = 0;
+    }
     LOGI("faded out %d frames to volume %f",frames, volume);
   }
 
   template <typename T>
   void fadeIn(T *data, int frames, int channels, float delta) {
     LOGI("fade in %d frames from volume %f",frames, volume);
+    bool custom = hasCustomFade();
     for (int j = 0; j < frames; j++) {
       for (int ch = 0; ch < channels; ch++) {
         data[j * channels + ch] = data[j * channels + ch] * volume;
-        volume += delta;
-        if (volume > 1.0f) {
-          volume = 1.0f;
+        if (!custom || fade_samples_remaining > 0) {
+          volume += delta;
+          if (volume > 1.0f) {
+            volume = 1.0f;
+          }
+          if (custom && fade_samples_remaining > 0) {
+            fade_samples_remaining--;
+            if (fade_samples_remaining == 0) {
+              is_fade_in = false;
+            }
+          }
         }
       }
     }
-    volume = 1.0f;
-    is_fade_in = false;
+    if (!custom) {
+      volume = 1.0f;
+      is_fade_in = false;
+    } else if (!is_fade_in) {
+      volume = 1.0f;
+    }
+  }
+
+  bool hasCustomFade() const { return fade_length_samples > 0; }
+
+  void resetFadeSamples() {
+    fade_samples_remaining = fade_length_samples;
   }
 };
 
@@ -268,6 +313,7 @@ public:
     AudioStream::setAudioInfo(info);
     fade_last.setAudioInfo(info);
     active = true;
+    updateFadeLength();
   }
 
   size_t readBytes(uint8_t *data, size_t len) override {
@@ -311,6 +357,11 @@ public:
 
   bool isFadeComplete() { return fade.isFadeComplete(); }
 
+  void setFadeTime(uint32_t fade_ms) {
+    fade_duration_ms = fade_ms;
+    updateFadeLength();
+  }
+
   /// If you can not provide any more samples we bring the last sample slowy back to 0
   void writeEnd(Print &print, int steps = 200) {
     fade_last.end(print, steps);
@@ -322,7 +373,27 @@ protected:
   LastSampleFader fade_last;
   Print *p_out = nullptr;
   Stream *p_io = nullptr;
+  uint32_t fade_duration_ms = 0;
   const char *error_msg = "setAudioInfo not called";
+
+  void updateFadeLength() {
+    if (fade_duration_ms == 0 || info.sample_rate == 0 || info.channels == 0) {
+      fade.setFadeSamples(0);
+      return;
+    }
+    uint64_t frames = (static_cast<uint64_t>(info.sample_rate) * fade_duration_ms) / 1000ULL;
+    if (frames == 0) {
+      frames = 1;
+    }
+    uint64_t samples = frames * static_cast<uint64_t>(info.channels);
+    if (samples == 0) {
+      samples = info.channels;
+    }
+    if (samples > UINT32_MAX) {
+      samples = UINT32_MAX;
+    }
+    fade.setFadeSamples(static_cast<uint32_t>(samples));
+  }
 };
 
 /**

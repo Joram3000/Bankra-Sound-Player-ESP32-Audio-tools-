@@ -409,6 +409,9 @@ class AudioPlayer : public AudioInfoSupport, public VolumeSupport {
   /// Sets delay (ms) to wait when output is full
   void setDelayIfOutputFull(int delayMs) { delay_if_full = delayMs; }
 
+  /// Sets the fade duration in milliseconds for automatic fade in/out
+  void setFadeTime(uint32_t fadeMs) { fade.setFadeTime(fadeMs); }
+
   /// Copies DEFAULT_BUFFER_SIZE (=1024 bytes) from the source to the decoder:
   /// Call this method in the loop.
   size_t copy() { return copy(copier.bufferSize()); }

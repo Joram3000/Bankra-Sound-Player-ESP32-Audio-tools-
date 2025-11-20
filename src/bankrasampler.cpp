@@ -30,6 +30,12 @@ const int PLAY_BUTTON_PIN = 13;
 const int AUX_BUTTON_PIN = 4; // gereserveerd voor toekomstige functies
 const uint32_t BUTTON_DEBOUNCE_MS = 20;
 const uint32_t BUTTON_RETRIGGER_GUARD_MS = 80; // minimale tijd tussen herstarts
+const uint32_t BUTTON_FADE_MS = 25; // gewenst fade in/out venster
+
+// Analoge volumeregeling
+const int VOLUME_POT_PIN = 34;             // ESP32 ADC-pin voor potmeter (AJUSTEER indien nodig)
+const uint32_t VOLUME_READ_INTERVAL_MS = 30; // hoe vaak we de pot meten
+const float VOLUME_DEADBAND = 0.02f;         // vermijd jitter bij kleine veranderingen
 
 // Display en waveform setup
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
@@ -60,6 +66,8 @@ ButtonState buttonStates[] = {
 const size_t BUTTON_COUNT = sizeof(buttonStates) / sizeof(buttonStates[0]);
 int activeButtonIndex = -1;
 String currentSamplePath = "";
+float lastVolumeLevel = -1.0f;
+uint32_t lastVolumeSampleTime = 0;
 
 String makeAbsolutePath(const char* path) {
   if (!path) {
@@ -80,6 +88,37 @@ String makeAbsolutePath(const char* path) {
     basePath += '/';
   }
   return basePath + fullPath;
+}
+
+float normalizeVolumeFromAdc(int raw) {
+  const float adcMax = 4095.0f; // ESP32 ADC 12-bit
+  float volume = static_cast<float>(raw) / adcMax;
+  if (volume < 0.0f) volume = 0.0f;
+  if (volume > 1.0f) volume = 1.0f;
+  return volume;
+}
+
+void updateVolumeFromPot(uint32_t now) {
+  if ((now - lastVolumeSampleTime) < VOLUME_READ_INTERVAL_MS) {
+    return;
+  }
+  lastVolumeSampleTime = now;
+
+  int raw = analogRead(VOLUME_POT_PIN);
+  float targetVolume = normalizeVolumeFromAdc(raw);
+
+  if (lastVolumeLevel < 0.0f) {
+    lastVolumeLevel = targetVolume;
+    player.setVolume(targetVolume);
+    return;
+  }
+
+  float diff = targetVolume - lastVolumeLevel;
+  if (diff < 0.0f) diff = -diff;
+  if (diff >= VOLUME_DEADBAND) {
+    lastVolumeLevel = targetVolume;
+    player.setVolume(targetVolume);
+  }
 }
 
 bool playSampleForButton(int buttonIndex) {
@@ -133,6 +172,7 @@ void printMetaData(MetaDataType type, const char* str, int len){
 void setup() {
   pinMode(PLAY_BUTTON_PIN, INPUT_PULLUP);
   pinMode(AUX_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(VOLUME_POT_PIN, INPUT);
   
   Serial.begin(115200);
   // Houd het logniveau laag zodat Serial I/O de audio niet onderbreekt
@@ -165,14 +205,20 @@ void setup() {
   player.setSilenceOnInactive(true); // houd uitgang stil wanneer niet actief
   player.setAutoNext(false);        // blijf op dezelfde sample
   player.setDelayIfOutputFull(0);   // voorkom 100ms pauzes bij volle I2S buffer
+  player.setFadeTime(BUTTON_FADE_MS); // zorg voor ~7ms fade in/out tegen klikken
   player.begin();
   player.stop(); // start stil totdat de knop wordt ingedrukt
+
+  // Initialiseer volume volgens potmeter
+  lastVolumeLevel = normalizeVolumeFromAdc(analogRead(VOLUME_POT_PIN));
+  player.setVolume(lastVolumeLevel);
   
   Serial.println("Setup complete");
 }
 
 void loop() {
   uint32_t now = millis();
+  updateVolumeFromPot(now);
   for (size_t i = 0; i < BUTTON_COUNT; ++i) {
     ButtonState &btn = buttonStates[i];
     bool rawState = digitalRead(btn.pin) == LOW;
