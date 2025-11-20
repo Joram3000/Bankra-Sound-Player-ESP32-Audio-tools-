@@ -42,29 +42,66 @@ ScopeDisplay scopeDisplay(&display, waveformBuffer, &waveformIndex);
 // Scope I2S stream (gebruikt display mutex voor thread-safety)
 ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, scopeDisplay.getMutex());
 
-bool restartCurrentTrack() {
-  const char* currentPath = source.toStr();
-  if (!currentPath || currentPath[0] == '\0') {
-    Serial.println("Huidige bestandsnaam onbekend, kan niet herstarten");
+struct ButtonState {
+  int pin;
+  const char* samplePath;
+  bool rawState;
+  bool debouncedState;
+  bool latched;
+  uint32_t lastDebounceTime;
+  uint32_t lastTriggerTime;
+};
+
+ButtonState buttonStates[] = {
+  {PLAY_BUTTON_PIN, "/1.wav", false, false, false, 0, 0},
+  {AUX_BUTTON_PIN,  "/2.wav", false, false, false, 0, 0}
+};
+
+const size_t BUTTON_COUNT = sizeof(buttonStates) / sizeof(buttonStates[0]);
+int activeButtonIndex = -1;
+String currentSamplePath = "";
+
+String makeAbsolutePath(const char* path) {
+  if (!path) {
+    return "";
+  }
+  String fullPath = path;
+  if (fullPath.startsWith("/")) {
+    return fullPath;
+  }
+  String basePath = startFilePath ? String(startFilePath) : "/";
+  if (basePath.length() == 0) {
+    basePath = "/";
+  }
+  if (!basePath.startsWith("/")) {
+    basePath = "/" + basePath;
+  }
+  if (!basePath.endsWith("/")) {
+    basePath += '/';
+  }
+  return basePath + fullPath;
+}
+
+bool playSampleForButton(int buttonIndex) {
+  if (buttonIndex < 0 || buttonIndex >= (int)BUTTON_COUNT) {
     return false;
   }
-  String fullPath = currentPath;
-  if (!fullPath.startsWith("/")) {
-    fullPath = String(startFilePath ? startFilePath : "/");
-    if (fullPath.length() == 0) {
-      fullPath = "/";
-    }
-    if (!fullPath.endsWith("/")) {
-      fullPath += '/';
-    }
-    fullPath += currentPath;
+
+  ButtonState &btn = buttonStates[buttonIndex];
+  String fullPath = makeAbsolutePath(btn.samplePath);
+  if (fullPath.isEmpty()) {
+    Serial.println("Geen geldig pad om af te spelen");
+    return false;
   }
 
   if (!player.setPath(fullPath.c_str())) {
-    Serial.printf("Kon bestand %s niet opnieuw openen\n", fullPath.c_str());
+    Serial.printf("Kon bestand %s niet openen\n", fullPath.c_str());
     return false;
   }
+
+  currentSamplePath = fullPath;
   player.play();
+  activeButtonIndex = buttonIndex;
   return true;
 }
 
@@ -135,32 +172,31 @@ void setup() {
 }
 
 void loop() {
-  // Lees play-knop met eenvoudige debounce
-  static bool lastRawPlayState = false;
-  static bool debouncedPlayState = false;
-  static uint32_t lastDebounceTime = 0;
-  static bool buttonLatched = false;
-  static uint32_t lastTriggerTime = 0;
-  bool rawPlayState = digitalRead(PLAY_BUTTON_PIN) == LOW; // actief laag
   uint32_t now = millis();
+  for (size_t i = 0; i < BUTTON_COUNT; ++i) {
+    ButtonState &btn = buttonStates[i];
+    bool rawState = digitalRead(btn.pin) == LOW;
+    if (rawState != btn.rawState) {
+      btn.lastDebounceTime = now;
+      btn.rawState = rawState;
+    }
 
-  if (rawPlayState != lastRawPlayState) {
-    lastDebounceTime = now;
-    lastRawPlayState = rawPlayState;
-  }
-
-  if ((now - lastDebounceTime) > BUTTON_DEBOUNCE_MS && rawPlayState != debouncedPlayState) {
-    debouncedPlayState = rawPlayState;
-    if (debouncedPlayState) {
-      if (!buttonLatched && (now - lastTriggerTime) > BUTTON_RETRIGGER_GUARD_MS) {
-        if (restartCurrentTrack()) {
-          buttonLatched = true;
-          lastTriggerTime = now;
+    if ((now - btn.lastDebounceTime) > BUTTON_DEBOUNCE_MS && rawState != btn.debouncedState) {
+      btn.debouncedState = rawState;
+      if (btn.debouncedState) {
+        if (!btn.latched && (now - btn.lastTriggerTime) > BUTTON_RETRIGGER_GUARD_MS) {
+          if (playSampleForButton((int)i)) {
+            btn.latched = true;
+            btn.lastTriggerTime = now;
+          }
+        }
+      } else {
+        btn.latched = false;
+        if (activeButtonIndex == (int)i) {
+          player.stop();
+          activeButtonIndex = -1;
         }
       }
-    } else if (buttonLatched) {
-      player.stop();
-      buttonLatched = false;
     }
   }
 
@@ -172,7 +208,13 @@ void loop() {
   static String lastFileName = "";
   
   bool currentPlayingState = player.isActive();
-  String currentFileName = source.toStr();  // Haal huidige bestandsnaam op
+  String currentFileName = currentSamplePath;
+  if (currentFileName.isEmpty()) {
+    const char* fallback = source.toStr();
+    if (fallback != nullptr) {
+      currentFileName = fallback;
+    }
+  }
   
   if(currentPlayingState != lastPlayingState || currentFileName != lastFileName) {
     // Update playing status
