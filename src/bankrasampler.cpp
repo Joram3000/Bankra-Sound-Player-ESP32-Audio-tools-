@@ -1,9 +1,6 @@
-// ik heb nu audio mp3 player
-// en het schermpje op een aparte thread
-// met het idee dat deze file zo ligt mogelijk blijft en er liever extra files komen dan dat deze code onleesbaar wordt.
-
-// het volgende wat zou kunnen gebeuren is dat er óf wav functie wordt toegevoegd
-// of dat er buttons worden toegevoegd waar de muziek op moet reageren/
+// we hebben nu een audio player, scope en 2 samples
+// in de toekomst moeten dat 4 samples worden en effecten er bij
+// de code moet zo clean mogelijk blijven zodat het goed begrijpelijk is wat er gebeurd
 
 
 #include <SPI.h>                    // SPI communicatie voor SD-kaart
@@ -28,6 +25,8 @@ AudioPlayer player(source, i2s, wavDecoder);
 const int SD_CS = 5;
 const int PLAY_BUTTON_PIN = 13;
 const int AUX_BUTTON_PIN = 4; // gereserveerd voor toekomstige functies
+// array van buttonPins
+const int BUTTON_PINS[] = {13, 4};
 const uint32_t BUTTON_DEBOUNCE_MS = 20;
 const uint32_t BUTTON_RETRIGGER_GUARD_MS = 80; // minimale tijd tussen herstarts
 const uint32_t BUTTON_FADE_MS = 25; // gewenst fade in/out venster
@@ -219,6 +218,8 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   updateVolumeFromPot(now);
+
+  // --- BUTTON LOGIC HIER (debounce + triggers) ---
   for (size_t i = 0; i < BUTTON_COUNT; ++i) {
     ButtonState &btn = buttonStates[i];
     bool rawState = digitalRead(btn.pin) == LOW;
@@ -248,7 +249,16 @@ void loop() {
 
   // Audio playback op core 1
   player.copy();
-  
+
+  // Als het afspelen gestopt is, maak de knop meteen helemaal vrij
+  if (!player.isActive() && activeButtonIndex >= 0) {
+    ButtonState &btn = buttonStates[activeButtonIndex];
+    btn.latched = false;
+    // Zorg dat retrigger guard nooit meer blokkeert na natuurlijk einde:
+    btn.lastTriggerTime = 0;  // of: now - BUTTON_RETRIGGER_GUARD_MS;
+    activeButtonIndex = -1;
+  }
+
   // Update playing status EN bestandsnaam
   static bool lastPlayingState = false;
   static String lastFileName = "";
@@ -256,37 +266,13 @@ void loop() {
   bool currentPlayingState = player.isActive();
   String currentFileName = currentSamplePath;
   if (currentFileName.isEmpty()) {
-    const char* fallback = source.toStr();
-    if (fallback != nullptr) {
-      currentFileName = fallback;
-    }
+    currentFileName = "-";
   }
   
   if(currentPlayingState != lastPlayingState || currentFileName != lastFileName) {
-    // Update playing status
-    if(currentPlayingState != lastPlayingState) {
-      scopeDisplay.setPlaying(currentPlayingState);
-    }
-    
-    // Update bestandsnaam (verwijder pad, houd alleen filename)
-    if(currentFileName != lastFileName) {
-      int lastSlash = currentFileName.lastIndexOf('/');
-      String displayName;
-      if(lastSlash >= 0) {
-        displayName = currentFileName.substring(lastSlash + 1);
-      } else {
-        displayName = currentFileName;
-      }
-      // Verwijder extensie (mp3, wav, etc.)
-      int lastDot = displayName.lastIndexOf('.');
-      if(lastDot > 0) {
-        displayName = displayName.substring(0, lastDot);
-      }
-      
-      scopeDisplay.setFilename(displayName);
-    }
-    
     lastPlayingState = currentPlayingState;
     lastFileName = currentFileName;
+    scopeDisplay.setPlaying(currentPlayingState);
+    scopeDisplay.setFilename(currentFileName);
   }
 }
