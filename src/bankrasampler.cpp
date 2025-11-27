@@ -1,278 +1,263 @@
-// we hebben nu een audio player, scope en 2 samples
-// in de toekomst moeten dat 4 samples worden en effecten er bij
-// de code moet zo clean mogelijk blijven zodat het goed begrijpelijk is wat er gebeurd
+#include <SPI.h>
+#include <SD.h>
+#include <Adafruit_SSD1306.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <AudioTools.h>
+#include "AudioTools/Disk/AudioSourceSD.h"
+#include "AudioTools/AudioCodecs/CodecWAV.h"
+#include <ScopeI2SStream.h>
+#include <ScopeDisplay.h>
 
+// Constants & globals (converted to clearer names / constexpr)
+constexpr const char* START_FILE_PATH = "/";
+constexpr const char* EXT_WAV = "wav";
+constexpr int SD_CS_PIN = 5;
+constexpr int BUTTON_PINS[] = {13, 4};
+constexpr size_t BUTTON_COUNT = sizeof(BUTTON_PINS) / sizeof(BUTTON_PINS[0]);
+constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
+constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 80;
+constexpr uint32_t BUTTON_FADE_MS = 25;
+constexpr int VOLUME_POT_PIN = 34;
+constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
+constexpr float VOLUME_DEADBAND = 0.02f;
 
-#include <SPI.h>                    // SPI communicatie voor SD-kaart
-#include <SD.h>                     // SD-kaart functionaliteit
-#include <Adafruit_SSD1306.h>       // OLED display driver
-#include <Wire.h>                   // I2C communicatie voor display
-#include <Adafruit_GFX.h>           // Grafische functies voor display
-#include <AudioTools.h>             // Audio verwerking bibliotheek
-#include "AudioTools/Disk/AudioSourceSD.h"      // SD-kaart audio bron
-#include "AudioTools/AudioCodecs/CodecWAV.h" // WAV decoder
-#include <ScopeI2SStream.h>         // Custom I2S stream met scope functionaliteit
-#include <ScopeDisplay.h>           // OLED scope display manager
-
-const char *startFilePath="/";
-const char* ext="wav";
-AudioSourceSD source(startFilePath, ext);
+// Audio stack
+AudioSourceSD source(START_FILE_PATH, EXT_WAV);
 I2SStream i2s;
 WAVDecoder wavDecoder;
 AudioPlayer player(source, i2s, wavDecoder);
 
-// Chip Select pin voor de SD-kaart module en bedieningsknoppen
-const int SD_CS = 5;
-const int PLAY_BUTTON_PIN = 13;
-const int AUX_BUTTON_PIN = 4; // gereserveerd voor toekomstige functies
-// array van buttonPins
-const int BUTTON_PINS[] = {13, 4};
-const uint32_t BUTTON_DEBOUNCE_MS = 20;
-const uint32_t BUTTON_RETRIGGER_GUARD_MS = 80; // minimale tijd tussen herstarts
-const uint32_t BUTTON_FADE_MS = 25; // gewenst fade in/out venster
-
-// Analoge volumeregeling
-const int VOLUME_POT_PIN = 34;             // ESP32 ADC-pin voor potmeter (AJUSTEER indien nodig)
-const uint32_t VOLUME_READ_INTERVAL_MS = 30; // hoe vaak we de pot meten
-const float VOLUME_DEADBAND = 0.02f;         // vermijd jitter bij kleine veranderingen
-
-// Display en waveform setup
+// Display & scope
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 int16_t waveformBuffer[WAVEFORM_SAMPLES];
 int waveformIndex = 0;
-
-// Scope display manager
 ScopeDisplay scopeDisplay(&display, waveformBuffer, &waveformIndex);
-
-// Scope I2S stream (gebruikt display mutex voor thread-safety)
 ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, scopeDisplay.getMutex());
 
-struct ButtonState {
-  int pin;
-  const char* samplePath;
-  bool rawState;
-  bool debouncedState;
-  bool latched;
-  uint32_t lastDebounceTime;
-  uint32_t lastTriggerTime;
-};
-
-ButtonState buttonStates[] = {
-  {PLAY_BUTTON_PIN, "/1.wav", false, false, false, 0, 0},
-  {AUX_BUTTON_PIN,  "/2.wav", false, false, false, 0, 0}
-};
-
-const size_t BUTTON_COUNT = sizeof(buttonStates) / sizeof(buttonStates[0]);
+// State
 int activeButtonIndex = -1;
 String currentSamplePath = "";
-float lastVolumeLevel = -1.0f;
-uint32_t lastVolumeSampleTime = 0;
 
+// Helpers
 String makeAbsolutePath(const char* path) {
-  if (!path) {
-    return "";
-  }
-  String fullPath = path;
-  if (fullPath.startsWith("/")) {
-    return fullPath;
-  }
-  String basePath = startFilePath ? String(startFilePath) : "/";
-  if (basePath.length() == 0) {
-    basePath = "/";
-  }
-  if (!basePath.startsWith("/")) {
-    basePath = "/" + basePath;
-  }
-  if (!basePath.endsWith("/")) {
-    basePath += '/';
-  }
-  return basePath + fullPath;
+  if (!path) return "";
+  String full = path;
+  if (full.startsWith("/")) return full;
+  String base = START_FILE_PATH ? String(START_FILE_PATH) : "/";
+  if (!base.endsWith("/")) base += '/';
+  return base + full;
 }
 
 float normalizeVolumeFromAdc(int raw) {
-  const float adcMax = 4095.0f; // ESP32 ADC 12-bit
-  float volume = static_cast<float>(raw) / adcMax;
-  if (volume < 0.0f) volume = 0.0f;
-  if (volume > 1.0f) volume = 1.0f;
-  return volume;
+  const float adcMax = 4095.0f;
+  float v = (float)raw / adcMax;
+  return constrain(v, 0.0f, 1.0f);
 }
 
-void updateVolumeFromPot(uint32_t now) {
-  if ((now - lastVolumeSampleTime) < VOLUME_READ_INTERVAL_MS) {
-    return;
-  }
-  lastVolumeSampleTime = now;
-
-  int raw = analogRead(VOLUME_POT_PIN);
-  float targetVolume = normalizeVolumeFromAdc(raw);
-
-  if (lastVolumeLevel < 0.0f) {
-    lastVolumeLevel = targetVolume;
-    player.setVolume(targetVolume);
-    return;
+// Encapsulated Button class
+class Button {
+public:
+  Button(int pin, const char* samplePath)
+    : pin(pin), samplePath(samplePath) {
+    pinMode(pin, INPUT_PULLUP);
   }
 
-  float diff = targetVolume - lastVolumeLevel;
-  if (diff < 0.0f) diff = -diff;
-  if (diff >= VOLUME_DEADBAND) {
-    lastVolumeLevel = targetVolume;
-    player.setVolume(targetVolume);
+  void begin() {
+    rawState = debouncedState = false;
+    lastDebounceTime = lastTriggerTime = 0;
+    latched = false;
   }
-}
 
-bool playSampleForButton(int buttonIndex) {
-  if (buttonIndex < 0 || buttonIndex >= (int)BUTTON_COUNT) {
+  // returns true when this button successfully triggered playback
+  bool update(uint32_t now) {
+    bool raw = digitalRead(pin) == LOW;
+    if (raw != rawState) {
+      lastDebounceTime = now;
+      rawState = raw;
+    }
+    if ((now - lastDebounceTime) > BUTTON_DEBOUNCE_MS && raw != debouncedState) {
+      debouncedState = raw;
+      if (debouncedState) {
+        if (!latched && (now - lastTriggerTime) > BUTTON_RETRIGGER_GUARD_MS) {
+          lastTriggerTime = now;
+          latched = true;
+          return true;
+        }
+      } else {
+        latched = false;
+      }
+    }
     return false;
   }
 
-  ButtonState &btn = buttonStates[buttonIndex];
-  String fullPath = makeAbsolutePath(btn.samplePath);
-  if (fullPath.isEmpty()) {
-    Serial.println("Geen geldig pad om af te spelen");
-    return false;
+  void release() { latched = false; lastTriggerTime = 0; }
+
+  bool isLatched() const { return latched; }
+  const char* getPath() const { return samplePath; }
+
+private:
+  int pin;
+  const char* samplePath;
+  bool rawState = false;
+  bool debouncedState = false;
+  bool latched = false;
+  uint32_t lastDebounceTime = 0;
+  uint32_t lastTriggerTime = 0;
+};
+
+// Volume manager
+class VolumeManager {
+public:
+  VolumeManager(int adcPin) : adcPin(adcPin) { pinMode(adcPin, INPUT); }
+
+  void begin() {
+    lastSampleTime = 0;
+    lastVolume = normalizeVolumeFromAdc(analogRead(adcPin));
+    player.setVolume(lastVolume);
   }
 
-  if (!player.setPath(fullPath.c_str())) {
-    Serial.printf("Kon bestand %s niet openen\n", fullPath.c_str());
-    return false;
+  void update(uint32_t now) {
+    if ((now - lastSampleTime) < VOLUME_READ_INTERVAL_MS) return;
+    lastSampleTime = now;
+    float target = normalizeVolumeFromAdc(analogRead(adcPin));
+    if (lastVolume < 0.0f || fabs(target - lastVolume) >= VOLUME_DEADBAND) {
+      lastVolume = target;
+      player.setVolume(target);
+    }
   }
 
-  currentSamplePath = fullPath;
-  player.play();
-  activeButtonIndex = buttonIndex;
-  return true;
-}
+private:
+  int adcPin;
+  uint32_t lastSampleTime = 0;
+  float lastVolume = -1.0f;
+};
 
+Button buttons[BUTTON_COUNT] = {
+  Button(BUTTON_PINS[0], "/1.wav"),
+  Button(BUTTON_PINS[1], "/2.wav")
+};
+
+VolumeManager volume(VOLUME_POT_PIN);
+
+// Metadata callback
 void printMetaData(MetaDataType type, const char* str, int len){
   Serial.print("==> ");
   Serial.print(toStr(type));
   Serial.print(": ");
-
-  if (!str || len <= 0) {
-    Serial.println();
-    return;
-  }
-
+  if (!str || len <= 0) { Serial.println(); return; }
   const int MAX_MD = 128;
-  int n = len;
-  if (n > MAX_MD) n = MAX_MD;
-  
+  int n = min(len, MAX_MD);
   static char buf[MAX_MD + 1];
   memcpy(buf, str, n);
   buf[n] = '\0';
   Serial.println(buf);
-  
-  // Update display titel via ScopeDisplay
-  if(type == Title) {
-    scopeDisplay.setFilename(String(buf));
-  }
+  if(type == Title) scopeDisplay.setFilename(String(buf));
 }
 
-void setup() {
-  pinMode(PLAY_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(AUX_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(VOLUME_POT_PIN, INPUT);
-  
-  Serial.begin(115200);
-  // Houd het logniveau laag zodat Serial I/O de audio niet onderbreekt
-  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
-
+// Audio/display init helpers
+void initSd() {
   SPI.begin();
-  if (!SD.begin(SD_CS, SPI, 80000000UL)) {
+  if (!SD.begin(SD_CS_PIN, SPI, 80000000UL)) {
     Serial.println("Card failed, or not present");
     while (1);
   }
+}
 
-  // Initialiseer scope display
-  if(!scopeDisplay.begin(0x3C)) {
+void initDisplay() {
+  if (!scopeDisplay.begin(0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
-    for(;;);
+    for (;;) ;
   }
+}
 
-  // Configureer I2S audio output met scope stream
+void initAudio() {
   auto cfg = scopeI2s.defaultConfig(TX_MODE);
   cfg.pin_bck = 14;
   cfg.pin_ws  = 15;
   cfg.pin_data = 32;
   scopeI2s.begin(cfg);
-  
-  // Gebruik scopeI2s in plaats van i2s
   player.setOutput(scopeI2s);
-  
-  // Metadata callback registreren
   player.setMetadataCallback(printMetaData);
-  player.setSilenceOnInactive(true); // houd uitgang stil wanneer niet actief
-  player.setAutoNext(false);        // blijf op dezelfde sample
-  player.setDelayIfOutputFull(0);   // voorkom 100ms pauzes bij volle I2S buffer
-  player.setFadeTime(BUTTON_FADE_MS); // zorg voor ~7ms fade in/out tegen klikken
+  player.setSilenceOnInactive(true);
+  player.setAutoNext(false);
+  player.setDelayIfOutputFull(0);
+  player.setFadeTime(BUTTON_FADE_MS);
   player.begin();
-  player.stop(); // start stil totdat de knop wordt ingedrukt
+  player.stop();
+}
 
-  // Initialiseer volume volgens potmeter
-  lastVolumeLevel = normalizeVolumeFromAdc(analogRead(VOLUME_POT_PIN));
-  player.setVolume(lastVolumeLevel);
-  
+// play helper
+bool playSampleForButton(size_t idx) {
+  if (idx >= BUTTON_COUNT) return false;
+  const char* path = buttons[idx].getPath();
+  String full = makeAbsolutePath(path);
+  if (full.isEmpty()) {
+    Serial.println("Geen geldig pad om af te spelen");
+    return false;
+  }
+  if (!player.setPath(full.c_str())) {
+    Serial.printf("Kon bestand %s niet openen\n", full.c_str());
+    return false;
+  }
+  currentSamplePath = full;
+  player.play();
+  activeButtonIndex = (int)idx;
+  return true;
+}
+
+// Setup & loop (slim)
+void setup() {
+  Serial.begin(115200);
+  AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
+
+  for (size_t i = 0; i < BUTTON_COUNT; ++i) buttons[i].begin();
+  initSd();
+  initDisplay();
+  initAudio();
+  volume.begin();
+
   Serial.println("Setup complete");
 }
 
 void loop() {
   uint32_t now = millis();
-  updateVolumeFromPot(now);
+  volume.update(now);
 
-  // --- BUTTON LOGIC HIER (debounce + triggers) ---
+  // buttons
   for (size_t i = 0; i < BUTTON_COUNT; ++i) {
-    ButtonState &btn = buttonStates[i];
-    bool rawState = digitalRead(btn.pin) == LOW;
-    if (rawState != btn.rawState) {
-      btn.lastDebounceTime = now;
-      btn.rawState = rawState;
-    }
-
-    if ((now - btn.lastDebounceTime) > BUTTON_DEBOUNCE_MS && rawState != btn.debouncedState) {
-      btn.debouncedState = rawState;
-      if (btn.debouncedState) {
-        if (!btn.latched && (now - btn.lastTriggerTime) > BUTTON_RETRIGGER_GUARD_MS) {
-          if (playSampleForButton((int)i)) {
-            btn.latched = true;
-            btn.lastTriggerTime = now;
-          }
-        }
-      } else {
-        btn.latched = false;
-        if (activeButtonIndex == (int)i) {
-          player.stop();
-          activeButtonIndex = -1;
-        }
+    if (buttons[i].update(now)) {
+      // trigger
+      if (playSampleForButton(i)) {
+        // nothing else here
+      }
+    } else {
+      // als knop is losgelaten en het was de actieve knop -> stop direct
+      if (!buttons[i].isLatched() && activeButtonIndex == (int)i) {
+        player.stop();                         // <-- stop playback bij loslaten
+        buttons[i].release();
+        activeButtonIndex = -1;
       }
     }
   }
 
-  // Audio playback op core 1
+  // Audio copy + housekeeping
   player.copy();
-
-  // Als het afspelen gestopt is, maak de knop meteen helemaal vrij
   if (!player.isActive() && activeButtonIndex >= 0) {
-    ButtonState &btn = buttonStates[activeButtonIndex];
-    btn.latched = false;
-    // Zorg dat retrigger guard nooit meer blokkeert na natuurlijk einde:
-    btn.lastTriggerTime = 0;  // of: now - BUTTON_RETRIGGER_GUARD_MS;
+    buttons[activeButtonIndex].release();
     activeButtonIndex = -1;
   }
 
-  // Update playing status EN bestandsnaam
+  // Update display state if changed
   static bool lastPlayingState = false;
   static String lastFileName = "";
-  
   bool currentPlayingState = player.isActive();
-  String currentFileName = currentSamplePath;
-  if (currentFileName.isEmpty()) {
-    currentFileName = "-";
-  }
-  
-  if(currentPlayingState != lastPlayingState || currentFileName != lastFileName) {
+  String fn = currentSamplePath;
+  if (fn.isEmpty()) fn = "-";
+  if (currentPlayingState != lastPlayingState || fn != lastFileName) {
     lastPlayingState = currentPlayingState;
-    lastFileName = currentFileName;
+    lastFileName = fn;
     scopeDisplay.setPlaying(currentPlayingState);
-    scopeDisplay.setFilename(currentFileName);
+    scopeDisplay.setFilename(fn);
   }
 }
