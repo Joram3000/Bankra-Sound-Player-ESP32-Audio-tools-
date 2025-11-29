@@ -8,6 +8,10 @@
 #include "AudioTools/AudioCodecs/CodecWAV.h"
 #include <ScopeI2SStream.h>
 #include <ScopeDisplay.h>
+#include <algorithm>
+#include <cstring>
+#include <vector>
+#include "AudioTools/CoreAudio/AudioEffects/AudioEffects.h"
 
 // Constants & globals (converted to clearer names / constexpr)
 constexpr const char* START_FILE_PATH = "/";
@@ -19,15 +23,196 @@ constexpr int SWITCH_PIN = 27;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 80;
 constexpr uint32_t BUTTON_FADE_MS = 25;
+constexpr uint32_t EFFECT_TOGGLE_FADE_MS = 6;
+constexpr uint32_t SAMPLE_ATTACK_FADE_MS = 10;
 constexpr int VOLUME_POT_PIN = 34;
 constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
-constexpr float VOLUME_DEADBAND = 0.02f;
+constexpr float VOLUME_DEADBAND = 0.06f;
+
+// Audio stack helpers
+class DryWetMixerStream : public AudioStream {
+public:
+  void begin(I2SStream& outStream, Delay& effect) {
+    dryOutput = &outStream;
+    delay = &effect;
+  }
+
+  void setMix(float dry, float wet) {
+    dryMix = dry;
+    wetMixActive = wet;
+    targetWetMix = effectEnabled ? wetMixActive : 0.0f;
+    currentWetMix = targetWetMix;
+    wetRampFramesRemaining = 0;
+  }
+
+  void setAudioInfo(AudioInfo newInfo) override {
+    AudioStream::setAudioInfo(newInfo);
+    if (dryOutput) dryOutput->setAudioInfo(newInfo);
+    sampleBytes = std::max<int>(1, newInfo.bits_per_sample / 8);
+    channels = std::max<int>(1, newInfo.channels);
+    frameBytes = sampleBytes * channels;
+    pendingLen = 0;
+    pendingBuffer.clear();
+    sampleRate = newInfo.sample_rate > 0 ? newInfo.sample_rate : 44100;
+    fadeFrames = std::max<uint32_t>(1, (sampleRate * EFFECT_TOGGLE_FADE_MS) / 1000);
+    attackFrames = std::max<uint32_t>(1, (sampleRate * SAMPLE_ATTACK_FADE_MS) / 1000);
+    targetWetMix = effectEnabled ? wetMixActive : 0.0f;
+    currentWetMix = targetWetMix;
+    wetRampFramesRemaining = 0;
+    attackFramesRemaining = 0;
+  }
+
+  void setEffectActive(bool active) {
+    if (delay) delay->setActive(active);
+    effectEnabled = active;
+    targetWetMix = effectEnabled ? wetMixActive : 0.0f;
+    scheduleWetRamp();
+  }
+
+  void updateEffectSampleRate(uint32_t sampleRate) {
+    if (delay && sampleRate > 0) {
+      delay->setSampleRate(sampleRate);
+    }
+  }
+
+  void triggerAttackFade() {
+    attackFramesRemaining = attackFrames;
+  }
+
+  size_t write(const uint8_t* data, size_t len) override {
+    if (!dryOutput || !delay || len == 0) return 0;
+    if (sampleBytes != sizeof(int16_t)) {
+      // Unsupported format; just pass through dry
+      return dryOutput->write(data, len);
+    }
+
+    size_t processed = 0;
+    while (len > 0) {
+      if (pendingLen > 0 || len < frameBytes) {
+        size_t needed = frameBytes - pendingLen;
+        size_t copyLen = std::min(needed, len);
+        if (pendingBuffer.size() < frameBytes) pendingBuffer.resize(frameBytes);
+        memcpy(pendingBuffer.data() + pendingLen, data, copyLen);
+        pendingLen += copyLen;
+        data += copyLen;
+        len -= copyLen;
+        if (pendingLen < frameBytes) break;
+        mixAndWrite(pendingBuffer.data(), frameBytes);
+        pendingLen = 0;
+        processed += frameBytes;
+        continue;
+      }
+
+      size_t chunkLen = (len / frameBytes) * frameBytes;
+      if (chunkLen == 0) break;
+      mixAndWrite(data, chunkLen);
+      data += chunkLen;
+      len -= chunkLen;
+      processed += chunkLen;
+    }
+
+    return processed;
+  }
+
+private:
+  I2SStream* dryOutput = nullptr;
+  Delay* delay = nullptr;
+  float dryMix = 1.0f;
+  float wetMixActive = 0.35f;
+  float currentWetMix = 0.0f;
+  float targetWetMix = 0.0f;
+  float wetRampDelta = 0.0f;
+  int sampleBytes = sizeof(int16_t);
+  int channels = 2;
+  std::vector<int16_t> mixBuffer;
+  std::vector<uint8_t> pendingBuffer;
+  size_t pendingLen = 0;
+  size_t frameBytes = sizeof(int16_t) * 2;
+  uint32_t sampleRate = 44100;
+  uint32_t fadeFrames = 1;
+  uint32_t wetRampFramesRemaining = 0;
+  bool effectEnabled = false;
+  uint32_t attackFrames = 1;
+  uint32_t attackFramesRemaining = 0;
+
+  void mixAndWrite(const uint8_t* chunk, size_t chunkLen) {
+    size_t frames = chunkLen / frameBytes;
+    if (frames == 0) return;
+    mixBuffer.resize(frames * channels);
+    const int16_t* input = reinterpret_cast<const int16_t*>(chunk);
+    int16_t* mixed = mixBuffer.data();
+
+    for (size_t frame = 0; frame < frames; ++frame) {
+      int32_t mono = 0;
+      for (int ch = 0; ch < channels; ++ch) {
+        mono += input[frame * channels + ch];
+      }
+      mono /= channels;
+
+      effect_t wetSample = delay->process(static_cast<effect_t>(mono));
+      float wetLevel = advanceWetMix();
+      float attackGain = advanceAttackGain();
+
+      for (int ch = 0; ch < channels; ++ch) {
+        int32_t dryVal = input[frame * channels + ch];
+        int32_t mixedVal = static_cast<int32_t>(dryMix * dryVal + wetLevel * wetSample);
+        if (attackGain < 0.999f) {
+          mixedVal = static_cast<int32_t>(mixedVal * attackGain);
+        }
+        if (mixedVal > 32767) mixedVal = 32767;
+        if (mixedVal < -32768) mixedVal = -32768;
+        mixed[frame * channels + ch] = static_cast<int16_t>(mixedVal);
+      }
+    }
+
+    dryOutput->write(reinterpret_cast<uint8_t*>(mixed), frames * frameBytes);
+  }
+
+  void scheduleWetRamp() {
+    if (fadeFrames <= 1) {
+      currentWetMix = targetWetMix;
+      wetRampFramesRemaining = 0;
+      wetRampDelta = 0.0f;
+      return;
+    }
+    wetRampFramesRemaining = fadeFrames;
+    wetRampDelta = (targetWetMix - currentWetMix) / static_cast<float>(fadeFrames);
+  }
+
+  float advanceWetMix() {
+    if (wetRampFramesRemaining > 0) {
+      currentWetMix += wetRampDelta;
+      --wetRampFramesRemaining;
+      if ((wetRampDelta > 0.0f && currentWetMix > targetWetMix) ||
+          (wetRampDelta < 0.0f && currentWetMix < targetWetMix)) {
+        currentWetMix = targetWetMix;
+        wetRampFramesRemaining = 0;
+        wetRampDelta = 0.0f;
+      }
+    } else {
+      currentWetMix = targetWetMix;
+    }
+    return currentWetMix;
+  }
+
+  float advanceAttackGain() {
+    if (attackFramesRemaining == 0) return 1.0f;
+    float gain = 1.0f - (static_cast<float>(attackFramesRemaining) / static_cast<float>(attackFrames));
+    --attackFramesRemaining;
+    if (attackFramesRemaining == 0) return 1.0f;
+    if (gain < 0.0f) gain = 0.0f;
+    if (gain > 1.0f) gain = 1.0f;
+    return gain;
+  }
+};
 
 // Audio stack
 AudioSourceSD source(START_FILE_PATH, EXT_WAV);
 I2SStream i2s;
 WAVDecoder wavDecoder;
 AudioPlayer player(source, i2s, wavDecoder);
+DryWetMixerStream mixerStream;
+Delay delayEffect;
 
 // Display & scope
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
@@ -121,6 +306,7 @@ public:
   void begin() {
     lastSampleTime = 0;
     lastVolume = normalizeVolumeFromAdc(analogRead(adcPin));
+    rampVolume = lastVolume;
     player.setVolume(lastVolume);
   }
 
@@ -130,7 +316,16 @@ public:
     float target = normalizeVolumeFromAdc(analogRead(adcPin));
     if (lastVolume < 0.0f || fabs(target - lastVolume) >= VOLUME_DEADBAND) {
       lastVolume = target;
-      player.setVolume(target);
+    }
+    // Ramp volume towards target
+    float rampStep = 0.8f; // Adjust for speed of ramp (smaller = slower)
+    if (fabs(rampVolume - lastVolume) > rampStep) {
+      if (rampVolume < lastVolume) rampVolume += rampStep;
+      else rampVolume -= rampStep;
+      player.setVolume(rampVolume);
+    } else {
+      rampVolume = lastVolume;
+      player.setVolume(rampVolume);
     }
   }
 
@@ -138,6 +333,7 @@ private:
   int adcPin;
   uint32_t lastSampleTime = 0;
   float lastVolume = -1.0f;
+  float rampVolume = -1.0f;
 };
 
 Button buttons[BUTTON_COUNT] = {
@@ -186,7 +382,19 @@ void initAudio() {
   cfg.pin_ws  = 15;
   cfg.pin_data = 32;
   scopeI2s.begin(cfg);
-  player.setOutput(scopeI2s);
+  mixerStream.begin(scopeI2s, delayEffect);
+  uint32_t effectiveSampleRate = cfg.sample_rate > 0 ? cfg.sample_rate : 44100;
+  AudioInfo mixInfo;
+  mixInfo.sample_rate = effectiveSampleRate;
+  mixInfo.channels = cfg.channels > 0 ? cfg.channels : 2;
+  mixInfo.bits_per_sample = cfg.bits_per_sample > 0 ? cfg.bits_per_sample : 16;
+  mixerStream.setAudioInfo(mixInfo);
+  mixerStream.updateEffectSampleRate(effectiveSampleRate);
+  mixerStream.setMix(1.0f, 0.75f);
+  delayEffect.setDuration(420);      // milliseconds
+  delayEffect.setDepth(0.40f);       // wet mix ratio handled in mixer
+  delayEffect.setFeedback(0.45f);    // repeats
+  player.setOutput(mixerStream);
   player.setMetadataCallback(printMetaData);
   player.setSilenceOnInactive(true);
   player.setAutoNext(false);
@@ -211,6 +419,7 @@ bool playSampleForButton(size_t idx) {
   }
   currentSamplePath = full;
   player.play();
+  mixerStream.triggerAttackFade();
   activeButtonIndex = (int)idx;
   return true;
 }
@@ -233,6 +442,7 @@ void setup() {
   initDisplay();
   initAudio();
   volume.begin();
+  mixerStream.setEffectActive(switchDebouncedState);
 
   Serial.println("Setup complete");
 }
@@ -251,6 +461,7 @@ void loop() {
     switchDebouncedState = raw;
     Serial.print("Switch: ");
     Serial.println(switchDebouncedState ? "ON" : "OFF");
+  mixerStream.setEffectActive(switchDebouncedState);
     // als je iets wil triggeren bij omschakelen, voeg het hier toe
   }
 

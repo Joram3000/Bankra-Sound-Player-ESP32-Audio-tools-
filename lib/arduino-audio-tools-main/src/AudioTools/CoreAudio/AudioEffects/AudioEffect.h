@@ -294,6 +294,15 @@ class Delay : public AudioEffect {
   effect_t process(effect_t input) {
     if (!active()) return input;
 
+    size_t available = buffer.size();
+    if (available == 0 || delay_len_samples == 0) {
+      return input;
+    }
+
+    if (delay_line_index >= delay_len_samples) {
+      delay_line_index = 0;
+    }
+
     // Read last audio sample in each delay line
     int32_t delayed_value = buffer[delay_line_index];
 
@@ -309,7 +318,8 @@ class Delay : public AudioEffect {
     buffer[delay_line_index] = clip(write_int);
 
     // Finally, update the delay line index
-    if (delay_line_index++ >= delay_len_samples) {
+    delay_line_index++;
+    if (delay_line_index >= delay_len_samples) {
       delay_line_index = 0;
     }
     return clip(out);

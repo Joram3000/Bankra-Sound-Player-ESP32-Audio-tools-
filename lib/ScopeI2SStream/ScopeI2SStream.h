@@ -16,6 +16,7 @@ class ScopeI2SStream : public I2SStream {
     int* waveformIndex;
     SemaphoreHandle_t* mutex;
     int downsampleRate;
+     float amplitudeGamma = 0.5f; // Schaalfactor voor amplitude (wortel)
     
   public:
     /**
@@ -44,7 +45,15 @@ class ScopeI2SStream : public I2SStream {
       for(int i = 0; i < numSamples; i += 2) {  // Skip rechter kanaal (stereo)
         if(sampleCounter++ % downsampleRate == 0) {  // Downsample
           if(xSemaphoreTake(*mutex, 0)) {  // Non-blocking mutex
-            waveformBuffer[*waveformIndex] = samples[i];  // Links kanaal
+            // Normaliseer sample naar [-1, 1]
+            int16_t s = samples[i];
+            float norm = (float)s / 32768.0f;
+            // Pas niet-lineaire schaal toe
+            float scaled = powf(fabsf(norm), amplitudeGamma);
+            if(norm < 0) scaled = -scaled;
+            // Schaal terug naar int16_t bereik
+            int16_t out = (int16_t)(scaled * 32767.0f);
+            waveformBuffer[*waveformIndex] = out;
             *waveformIndex = (*waveformIndex + 1) % WAVEFORM_SAMPLES;
             xSemaphoreGive(*mutex);
           }
