@@ -13,8 +13,9 @@
 constexpr const char* START_FILE_PATH = "/";
 constexpr const char* EXT_WAV = "wav";
 constexpr int SD_CS_PIN = 5;
-constexpr int BUTTON_PINS[] = {13, 4};
+constexpr int BUTTON_PINS[] = {13, 4, 16, 17};
 constexpr size_t BUTTON_COUNT = sizeof(BUTTON_PINS) / sizeof(BUTTON_PINS[0]);
+constexpr int SWITCH_PIN = 27;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 80;
 constexpr uint32_t BUTTON_FADE_MS = 25;
@@ -39,6 +40,11 @@ ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, scopeDisplay.getMutex())
 int activeButtonIndex = -1;
 String currentSamplePath = "";
 
+// Switch state (pin 27, one side to GND -> use INPUT_PULLUP; LOW = ON)
+bool switchRawState = false;
+bool switchDebouncedState = false;
+uint32_t switchLastDebounceTime = 0;
+
 // Helpers
 String makeAbsolutePath(const char* path) {
   if (!path) return "";
@@ -51,15 +57,15 @@ String makeAbsolutePath(const char* path) {
 
 float normalizeVolumeFromAdc(int raw) {
   const float adcMax = 4095.0f;
-  float v = (float)raw / adcMax;
+  float v = 1.0f - ((float)raw / adcMax);
   return constrain(v, 0.0f, 1.0f);
 }
 
 // Encapsulated Button class
 class Button {
 public:
-  Button(int pin, const char* samplePath)
-    : pin(pin), samplePath(samplePath) {
+  Button(int pin, const char* samplePath, bool activeLow = true)
+    : pin(pin), samplePath(samplePath), activeLow(activeLow) {
     pinMode(pin, INPUT_PULLUP);
   }
 
@@ -71,7 +77,7 @@ public:
 
   // returns true when this button successfully triggered playback
   bool update(uint32_t now) {
-    bool raw = digitalRead(pin) == LOW;
+    bool raw = activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
     if (raw != rawState) {
       lastDebounceTime = now;
       rawState = raw;
@@ -99,6 +105,7 @@ public:
 private:
   int pin;
   const char* samplePath;
+  bool activeLow = true;
   bool rawState = false;
   bool debouncedState = false;
   bool latched = false;
@@ -134,8 +141,10 @@ private:
 };
 
 Button buttons[BUTTON_COUNT] = {
-  Button(BUTTON_PINS[0], "/1.wav"),
-  Button(BUTTON_PINS[1], "/2.wav")
+  Button(BUTTON_PINS[0], "/1.wav", false), // false = push-to-break (pressed reads HIGH)
+  Button(BUTTON_PINS[1], "/2.wav", false),
+  Button(BUTTON_PINS[2], "/3.wav", false),
+  Button(BUTTON_PINS[3], "/4.wav", false),
 };
 
 VolumeManager volume(VOLUME_POT_PIN);
@@ -212,6 +221,14 @@ void setup() {
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
 
   for (size_t i = 0; i < BUTTON_COUNT; ++i) buttons[i].begin();
+
+  // init switch pin
+  pinMode(SWITCH_PIN, INPUT_PULLUP);
+  bool init = (digitalRead(SWITCH_PIN) == LOW);
+  switchRawState = switchDebouncedState = init;
+  Serial.print("Switch initial: ");
+  Serial.println(init ? "ON" : "OFF");
+
   initSd();
   initDisplay();
   initAudio();
@@ -223,6 +240,19 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   volume.update(now);
+
+  // Read switch (debounced) - pin wired to GND on one side; LOW = ON
+  bool raw = (digitalRead(SWITCH_PIN) == LOW);
+  if (raw != switchRawState) {
+    switchLastDebounceTime = now;
+    switchRawState = raw;
+  }
+  if ((now - switchLastDebounceTime) > BUTTON_DEBOUNCE_MS && raw != switchDebouncedState) {
+    switchDebouncedState = raw;
+    Serial.print("Switch: ");
+    Serial.println(switchDebouncedState ? "ON" : "OFF");
+    // als je iets wil triggeren bij omschakelen, voeg het hier toe
+  }
 
   // buttons
   for (size_t i = 0; i < BUTTON_COUNT; ++i) {
