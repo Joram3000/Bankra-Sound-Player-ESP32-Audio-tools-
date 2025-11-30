@@ -14,15 +14,15 @@
 #include "AudioTools/CoreAudio/AudioEffects/AudioEffects.h"
 
 // Constants & globals (converted to clearer names / constexpr)
-constexpr const char* START_FILE_PATH = "/";
-constexpr const char* EXT_WAV = "wav";
-constexpr int SD_CS_PIN = 5;
+// constexpr const char* "/" = "/";
+// constexpr const char* EXT_WAV = "wav";
+// constexpr int SD_CS_PIN = 5;
 constexpr int BUTTON_PINS[] = {13, 4, 16, 17};
 constexpr size_t BUTTON_COUNT = sizeof(BUTTON_PINS) / sizeof(BUTTON_PINS[0]);
 constexpr int SWITCH_PIN = 27;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
-constexpr uint32_t BUTTON_FADE_MS = 25;
+constexpr uint32_t BUTTON_FADE_MS = 12;
 constexpr uint32_t EFFECT_TOGGLE_FADE_MS = 6;
 constexpr uint32_t SAMPLE_ATTACK_FADE_MS = 10;
 constexpr int VOLUME_POT_PIN = 34;
@@ -60,6 +60,9 @@ public:
     currentWetMix = targetWetMix;
     wetRampFramesRemaining = 0;
     attackFramesRemaining = 0;
+    const size_t reserveFrames = 256; // tweak if needed
+    mixBuffer.clear();
+    mixBuffer.reserve(reserveFrames * channels);
   }
 
   void setEffectActive(bool active) {
@@ -207,7 +210,7 @@ private:
 };
 
 // Audio stack
-AudioSourceSD source(START_FILE_PATH, EXT_WAV);
+AudioSourceSD source("/", "wav");
 I2SStream i2s;
 WAVDecoder wavDecoder;
 AudioPlayer player(source, i2s, wavDecoder);
@@ -340,24 +343,24 @@ Button buttons[BUTTON_COUNT] = {
 VolumeManager volume(VOLUME_POT_PIN);
 
 // Metadata callback
-void printMetaData(MetaDataType type, const char* str, int len){
-  Serial.print("==> ");
-  Serial.print(toStr(type));
-  Serial.print(": ");
-  if (!str || len <= 0) { Serial.println(); return; }
-  const int MAX_MD = 128;
-  int n = min(len, MAX_MD);
-  static char buf[MAX_MD + 1];
-  memcpy(buf, str, n);
-  buf[n] = '\0';
-  Serial.println(buf);
-  if(type == Title) scopeDisplay.setFilename(String(buf));
-}
+// void printMetaData(MetaDataType type, const char* str, int len){
+//   Serial.print("==> ");
+//   Serial.print(toStr(type));
+//   Serial.print(": ");
+//   if (!str || len <= 0) { Serial.println(); return; }
+//   const int MAX_MD = 128;
+//   int n = min(len, MAX_MD);
+//   static char buf[MAX_MD + 1];
+//   memcpy(buf, str, n);
+//   buf[n] = '\0';
+//   Serial.println(buf);
+//   if(type == Title) scopeDisplay.setFilename(String(buf));
+// }
 
 // Audio/display init helpers
 void initSd() {
   SPI.begin();
-  if (!SD.begin(SD_CS_PIN, SPI, 80000000UL)) {
+  if (!SD.begin(5, SPI, 80000000UL)) {
     Serial.println("Card failed, or not present");
     while (1);
   }
@@ -389,7 +392,7 @@ void initAudio() {
   delayEffect.setDepth(0.40f);       // wet mix ratio handled in mixer
   delayEffect.setFeedback(0.45f);    // repeats
   player.setOutput(mixerStream);
-  player.setMetadataCallback(printMetaData);
+  // player.setMetadataCallback(printMetaData);
   player.setSilenceOnInactive(true);
   player.setAutoNext(false);
   player.setDelayIfOutputFull(0);
@@ -403,14 +406,14 @@ bool playSampleForButton(size_t idx) {
   if (idx >= BUTTON_COUNT) return false;
   const char* path = buttons[idx].getPath();
   // Build full path inline. If `path` is absolute (starts with '/'), use it
-  // directly; otherwise prefix with START_FILE_PATH.
+  // directly; otherwise prefix with "/".
   String full;
   if (!path || strlen(path) == 0) {
     full = "";
   } else {
     full = String(path);
     if (!full.startsWith("/")) {
-      String base = START_FILE_PATH ? String(START_FILE_PATH) : "/";
+      String base = "/" ? String("/") : "/";
       if (!base.endsWith("/")) base += '/';
       full = base + full;
     }
@@ -465,10 +468,7 @@ void loop() {
   }
   if ((now - switchLastDebounceTime) > BUTTON_DEBOUNCE_MS && raw != switchDebouncedState) {
     switchDebouncedState = raw;
-    Serial.print("Switch: ");
-    Serial.println(switchDebouncedState ? "ON" : "OFF");
   mixerStream.setEffectActive(switchDebouncedState);
-    // als je iets wil triggeren bij omschakelen, voeg het hier toe
   }
 
   // buttons
