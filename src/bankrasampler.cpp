@@ -490,8 +490,11 @@ void loop() {
 
   // Audio copy + housekeeping
   player.copy();
+  // Als een sample klaar is: verbreek alleen de associatie met activeButtonIndex
+  // maar release de latched state niet automatisch. Daardoor blijft een ingedrukte
+  // knop latched en veroorzaakt geen her-trigger totdat je loslaat en opnieuw
+  // indrukt. Dit zorgt dat "ingedrukt houden" geen onverwachte herstarten geeft.
   if (!player.isActive() && activeButtonIndex >= 0) {
-    buttons[activeButtonIndex].release();
     activeButtonIndex = -1;
   }
 
