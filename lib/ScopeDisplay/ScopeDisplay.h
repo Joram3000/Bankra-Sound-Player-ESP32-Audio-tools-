@@ -59,8 +59,8 @@ class ScopeDisplay {
           xSemaphoreGive(displayMutex);
         }
         
-        // Update display elke 50ms voor vloeiende scope (20 FPS)
-        vTaskDelay(50 / portTICK_PERIOD_MS);
+        // Update display elke 40ms voor vloeiende scope (25 FPS)
+        vTaskDelay(40 / portTICK_PERIOD_MS);
       }
     }
     
@@ -161,27 +161,7 @@ class ScopeDisplay {
       }
     }
     
-    /**
-     * Update alleen playing status (thread-safe)
-     * @param playing Is audio aan het spelen?
-     */
-    void setPlaying(bool playing) {
-      if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
-        isPlaying = playing;
-        xSemaphoreGive(displayMutex);
-      }
-    }
-    
-    /**
-     * Update alleen bestandsnaam (thread-safe)
-     * @param filename Huidige bestandsnaam
-     */
-    void setFilename(const String& filename) {
-      if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
-        currentFile = filename;
-        xSemaphoreGive(displayMutex);
-      }
-    }
+  
     
     /**
      * Krijg mutex handle voor gebruik door ScopeI2SStream
