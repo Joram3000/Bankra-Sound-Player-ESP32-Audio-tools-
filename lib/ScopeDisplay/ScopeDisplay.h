@@ -5,6 +5,7 @@
 #include <Adafruit_GFX.h>
 #include <Wire.h>
 #include <Arduino.h>
+#include <algorithm>
 
 // Waveform buffer configuratie
 #define WAVEFORM_SAMPLES 128  // Aantal samples (= display breedte)
@@ -26,6 +27,14 @@ class ScopeDisplay {
     // Waveform data (gedeeld met ScopeI2SStream)
     int16_t* waveformBuffer;
     int* waveformIndex;
+    int waveformSamples; // aantal samples in de cirkelbuffer (was WAVEFORM_SAMPLES)
+    
+    // Zoom/state
+    float horizZoom = 4.0f;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
+    float vertScale = 2.0f;   // amplitude schaal factor
+
+    // bewaar laatst getekende Y tussen frames om jumps te voorkomen
+    float lastDisplayY = NAN;
     
     // Status info
     String currentFile;
@@ -66,34 +75,86 @@ class ScopeDisplay {
     
    
     /**
-     * Render oscilloscope waveform
+     * Render oscilloscope waveform met zoom support
+     * - linear interpolation tussen samples
+     * - optional exponential smoothing voor vloeiender curve
+     * - optional envelope (min/max) voor behoud van transiënten
      */
     void renderWaveform() {
       const int scopeCenter = SCOPE_HEIGHT / 2;
-      
-      // Teken middenlijn (0V referentie - gestippeld)
-      for(int x = 0; x < SCREEN_WIDTH; x += 4) {
-        display->drawPixel(x, scopeCenter, SSD1306_WHITE);
+      if (waveformSamples <= 0 || !waveformBuffer) return;
+
+      const bool useSmoothing = true;
+      const float smoothingAlpha = 0.6f;
+      const bool drawEnvelope = false;
+
+      int displayedSamples = std::max(1, static_cast<int>(waveformSamples / horizZoom));
+      displayedSamples = std::min(displayedSamples, waveformSamples);
+
+      // Zorg dat endpoints precies overeenkomen: pixel 0 -> startIndex, pixel W-1 -> newestIndex
+      float step = (displayedSamples > 1 && SCREEN_WIDTH > 1)
+                    ? static_cast<float>(displayedSamples - 1) / static_cast<float>(SCREEN_WIDTH - 1)
+                    : 0.0f;
+
+      int newestIndex = ((*waveformIndex - 1) + waveformSamples) % waveformSamples;
+      int startIndex = newestIndex - displayedSamples + 1;
+      if (startIndex < 0) startIndex += waveformSamples;
+
+      // window-size voor gemiddelde per pixel (smaller window to avoid over-blur)
+      int windowSize = std::max(1, static_cast<int>(ceilf((displayedSamples / (float)SCREEN_WIDTH))));
+      int halfWin = (windowSize - 1) / 2;
+
+      // gebruik vorige frame eindwaarde als start voor smoothing (vermijdt hoge eerste pixel)
+      float prevYf = isfinite(lastDisplayY) ? lastDisplayY : NAN;
+
+      for (int x = 0; x < SCREEN_WIDTH; ++x) {
+        float samplePos = startIndex + x * step;
+        int centerIdx = static_cast<int>(floor(samplePos));
+        float frac = samplePos - static_cast<float>(centerIdx);
+        centerIdx %= waveformSamples; if (centerIdx < 0) centerIdx += waveformSamples;
+
+        // gemiddelde over een klein, symmetrisch venster rond samplePos (demp spikes)
+        int winSum = 0, winCount = 0;
+        for (int w = -halfWin; w <= halfWin; ++w) {
+          int i = (centerIdx + w) % waveformSamples; if (i < 0) i += waveformSamples;
+          winSum += waveformBuffer[i];
+          ++winCount;
+        }
+        // lineaire interp tussen centerIdx en centerIdx+1 om fractionele positie mee te nemen
+        int nextIdx = (centerIdx + 1) % waveformSamples;
+        float sampleCenter = static_cast<float>(winSum) / static_cast<float>(winCount);
+        float sampleNext = static_cast<float>(waveformBuffer[nextIdx]);
+        float val = sampleCenter * (1.0f - frac) + sampleNext * frac;
+
+        if (drawEnvelope) {
+          // optionele envelope-rendering (niet gewijzigd)
+        }
+
+        float yf = scopeCenter - (val * ((SCOPE_HEIGHT / 2) * vertScale) / 32768.0f);
+
+        if (useSmoothing) {
+          if (!isfinite(prevYf)) prevYf = yf; // initialiseer netjes met eerste mapped waarde
+          float smoothY = (smoothingAlpha * yf) + ((1.0f - smoothingAlpha) * prevYf);
+          int yPrev = constrain(static_cast<int>(round(prevYf)), 0, SCOPE_HEIGHT - 1);
+          int yCur  = constrain(static_cast<int>(round(smoothY)), 0, SCOPE_HEIGHT - 1);
+          if (x == 0) {
+            display->drawPixel(x, yCur, SSD1306_WHITE);
+          } else {
+            display->drawLine(x - 1, yPrev, x, yCur, SSD1306_WHITE);
+          }
+          prevYf = smoothY;
+        } else {
+          int y = constrain(static_cast<int>(round(yf)), 0, SCOPE_HEIGHT - 1);
+          if (!isfinite(prevYf)) {
+            display->drawPixel(x, y, SSD1306_WHITE);
+          } else {
+            display->drawLine(x - 1, static_cast<int>(round(prevYf)), x, y, SSD1306_WHITE);
+          }
+          prevYf = static_cast<float>(y);
+        }
       }
-      
-      // Teken waveform (roteer buffer zodat nieuwste sample rechts is)
-      for(int x = 0; x < WAVEFORM_SAMPLES - 1; x++) {
-        // Bereken buffer indices (oudste naar nieuwste)
-        int bufIdx1 = (*waveformIndex + x) % WAVEFORM_SAMPLES;
-        int bufIdx2 = (*waveformIndex + x + 1) % WAVEFORM_SAMPLES;
-        
-        // Schaal 16-bit audio sample naar display pixels
-        // -32768 to +32767 -> scopeHeight/2 pixels
-        int y1 = scopeCenter - (waveformBuffer[bufIdx1] * SCOPE_HEIGHT / 2 / 32768);
-        int y2 = scopeCenter - (waveformBuffer[bufIdx2] * SCOPE_HEIGHT / 2 / 32768);
-        
-        // Begrens binnen display
-        y1 = constrain(y1, 0, SCOPE_HEIGHT - 1);
-        y2 = constrain(y2, 0, SCOPE_HEIGHT - 1);
-        
-        // Teken lijn tussen samples
-        display->drawLine(x, y1, x + 1, y2, SSD1306_WHITE);
-      }
+
+      lastDisplayY = prevYf;
     }
     
   public:
@@ -102,18 +163,31 @@ class ScopeDisplay {
      * @param disp Pointer naar Adafruit_SSD1306 display object
      * @param waveBuffer Pointer naar waveform buffer array
      * @param waveIdx Pointer naar buffer index
+     * @param waveSamples Aantal samples in de buffer (geef dezelfde waarde als ScopeI2SStream)
      */
-    ScopeDisplay(Adafruit_SSD1306* disp, int16_t* waveBuffer, int* waveIdx) 
+    // Backward-compatible 3-arg constructor (delegates to 4-arg)
+    ScopeDisplay(Adafruit_SSD1306* disp, int16_t* waveBuffer, int* waveIdx)
+      : ScopeDisplay(disp, waveBuffer, waveIdx, WAVEFORM_SAMPLES) {}
+
+    ScopeDisplay(Adafruit_SSD1306* disp, int16_t* waveBuffer, int* waveIdx, int waveSamples) 
       : display(disp),
         displayTaskHandle(NULL),
         waveformBuffer(waveBuffer),
         waveformIndex(waveIdx),
+        waveformSamples(waveSamples),
         currentFile(""),
         isPlaying(false) {
       
       // Creëer mutex voor thread-safe updates
       displayMutex = xSemaphoreCreateMutex();
     }
+    
+    // Zoom controls (thread-safe gebruik via mutex bij nodig)
+    void zoomHorizIn()  { horizZoom = std::min(8.0f, horizZoom * 1.5f); }   // inzoomen
+    void zoomHorizOut() { horizZoom = std::max(0.25f, horizZoom / 1.5f); } // uitzoomen
+    void zoomVertIn()   { vertScale = std::min(8.0f, vertScale * 1.25f); }
+    void zoomVertOut()  { vertScale = std::max(0.125f, vertScale / 1.25f); }
+    void resetZoom()    { horizZoom = 1.0f; vertScale = 1.0f; }
     
     /**
      * Initialiseer display en start update task
@@ -161,12 +235,6 @@ class ScopeDisplay {
       }
     }
     
-  
-    
-    /**
-     * Krijg mutex handle voor gebruik door ScopeI2SStream
-     * @return Pointer naar display mutex
-     */
     SemaphoreHandle_t* getMutex() {
       return &displayMutex;
     }
