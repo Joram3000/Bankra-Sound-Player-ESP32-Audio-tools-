@@ -14,8 +14,6 @@
  * 
  * Features:
  * - Real-time waveform display (oscilloscope)
- * - Status indicator (playing/paused)
- * - Bestandsnaam weergave
  * - Thread-safe updates via mutex
  * - Eigen FreeRTOS task op Core 0
  */
@@ -36,9 +34,7 @@ class ScopeDisplay {
     // Display layout configuratie
     static const int SCREEN_WIDTH = 128;
     static const int SCREEN_HEIGHT = 64;
-    static const int TITLE_HEIGHT = 11;
-    static const int SCOPE_TOP = 12;
-    static const int SCOPE_HEIGHT = 52;
+    static const int SCOPE_HEIGHT = 64;
     
     /**
      * Display update task - draait in aparte thread
@@ -56,9 +52,6 @@ class ScopeDisplay {
         if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
           display->clearDisplay();
           
-          // Render status en titel
-          renderTitle();
-          
           // Render waveform scope
           renderWaveform();
           
@@ -71,33 +64,12 @@ class ScopeDisplay {
       }
     }
     
-    /**
-     * Render titel sectie met status en bestandsnaam
-     */
-    void renderTitle() {
-      display->setTextSize(1);
-      display->setCursor(0, 0);
-      
-      // Status icoon
-      display->print(isPlaying ? ">" : "||");
-      display->print(" ");
-      
-      // Bestandsnaam (verkort als te lang)
-      String shortName = currentFile;
-      if(shortName.length() > 18) {
-        shortName = shortName.substring(0, 15) + "...";
-      }
-      display->println(shortName);
-      
-      // Horizontale scheidingslijn
-      display->drawLine(0, TITLE_HEIGHT, SCREEN_WIDTH - 1, TITLE_HEIGHT, SSD1306_WHITE);
-    }
-    
+   
     /**
      * Render oscilloscope waveform
      */
     void renderWaveform() {
-      const int scopeCenter = SCOPE_TOP + SCOPE_HEIGHT / 2;
+      const int scopeCenter = SCOPE_HEIGHT / 2;
       
       // Teken middenlijn (0V referentie - gestippeld)
       for(int x = 0; x < SCREEN_WIDTH; x += 4) {
@@ -116,8 +88,8 @@ class ScopeDisplay {
         int y2 = scopeCenter - (waveformBuffer[bufIdx2] * SCOPE_HEIGHT / 2 / 32768);
         
         // Begrens binnen display
-        y1 = constrain(y1, SCOPE_TOP, SCOPE_TOP + SCOPE_HEIGHT - 1);
-        y2 = constrain(y2, SCOPE_TOP, SCOPE_TOP + SCOPE_HEIGHT - 1);
+        y1 = constrain(y1, 0, SCOPE_HEIGHT - 1);
+        y2 = constrain(y2, 0, SCOPE_HEIGHT - 1);
         
         // Teken lijn tussen samples
         display->drawLine(x, y1, x + 1, y2, SSD1306_WHITE);

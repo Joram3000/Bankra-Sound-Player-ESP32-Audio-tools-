@@ -21,13 +21,13 @@ constexpr int BUTTON_PINS[] = {13, 4, 16, 17};
 constexpr size_t BUTTON_COUNT = sizeof(BUTTON_PINS) / sizeof(BUTTON_PINS[0]);
 constexpr int SWITCH_PIN = 27;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
-constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 80;
+constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
 constexpr uint32_t BUTTON_FADE_MS = 25;
 constexpr uint32_t EFFECT_TOGGLE_FADE_MS = 6;
 constexpr uint32_t SAMPLE_ATTACK_FADE_MS = 10;
 constexpr int VOLUME_POT_PIN = 34;
 constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
-constexpr float VOLUME_DEADBAND = 0.06f;
+constexpr float VOLUME_DEADBAND = 0.12f;
 
 // Audio stack helpers
 class DryWetMixerStream : public AudioStream {
@@ -231,14 +231,8 @@ bool switchDebouncedState = false;
 uint32_t switchLastDebounceTime = 0;
 
 // Helpers
-String makeAbsolutePath(const char* path) {
-  if (!path) return "";
-  String full = path;
-  if (full.startsWith("/")) return full;
-  String base = START_FILE_PATH ? String(START_FILE_PATH) : "/";
-  if (!base.endsWith("/")) base += '/';
-  return base + full;
-}
+// (Inlined path handling where needed; `makeAbsolutePath` removed because
+// the project always uses the same base path.)
 
 float normalizeVolumeFromAdc(int raw) {
   const float adcMax = 4095.0f;
@@ -408,7 +402,19 @@ void initAudio() {
 bool playSampleForButton(size_t idx) {
   if (idx >= BUTTON_COUNT) return false;
   const char* path = buttons[idx].getPath();
-  String full = makeAbsolutePath(path);
+  // Build full path inline. If `path` is absolute (starts with '/'), use it
+  // directly; otherwise prefix with START_FILE_PATH.
+  String full;
+  if (!path || strlen(path) == 0) {
+    full = "";
+  } else {
+    full = String(path);
+    if (!full.startsWith("/")) {
+      String base = START_FILE_PATH ? String(START_FILE_PATH) : "/";
+      if (!base.endsWith("/")) base += '/';
+      full = base + full;
+    }
+  }
   if (full.isEmpty()) {
     Serial.println("Geen geldig pad om af te spelen");
     return false;
