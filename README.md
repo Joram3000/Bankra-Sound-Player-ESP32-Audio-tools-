@@ -4,9 +4,8 @@ Een compacte, polyfone **sample player** gebouwd rond een **ESP32**, met een **I
 
 Projectdoel:
 
-* Vier samples triggeren via vier knoppen.
+* samples triggeren via vier knoppen.
 * **Press = play**, **release = immediate stop**.
-* **Polyfonie** ondersteunen (meerdere samples tegelijk).
 * Focus op **lage latency**, stabiele I2S‑output.
 
 ---
@@ -85,15 +84,7 @@ struct SampleSlot {
 
 ### OLED output
 
-Weergavevoorbeeld:
-
-```
-Playing:
-[1] ON
-[2] OFF
-[3] ON
-[4] OFF
-```
+OP het scherm hebben we een oscillosope weergave avn de audio
 
 Het scherm wordt alleen geüpdatet bij statuswijzigingen.
 
@@ -106,24 +97,3 @@ Het scherm wordt alleen geüpdatet bij statuswijzigingen.
 * Foutmeldingen via Serial (`SD init fail`, `missing file`, etc.).
 
 ---
-
-## Verwachting voor Copilot
-
-Copilot moet code genereren die:
-
-* Een betrouwbare **I2SStream + AudioPlayer** setup maakt.
-* Een array van vier `SampleSlot` objecten beheert.
-* `playSample(i)` en `stopSample(i)` implementeert.
-* Knoppen periodiek scant in `loop()`.
-* Het OLED‑display enkel bij wijzigingen bijwerkt.
-* Robuust foutlogt.
-
----
-
-## Uitbreidingsopties
-
-* Volume per kanaal.
-* Loop‑modus per sample.
-* VU‑meter of waveform rendering op OLED.
-* MIDI‑triggering (USB of DIN).
-* Extra polyfonie, timestretching of pitch‑shifting.
