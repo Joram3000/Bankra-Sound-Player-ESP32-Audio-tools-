@@ -1,13 +1,10 @@
 #include <SPI.h>
 #include <SD.h>
-#include <Adafruit_SSD1306.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
 #include <AudioTools.h>
 #include "AudioTools/Disk/AudioSourceSD.h"
 #include "AudioTools/AudioCodecs/CodecWAV.h"
 #include <ScopeI2SStream.h>
-#include <ScopeDisplay.h>
 #include <algorithm>
 #include <cstring>
 #include <vector>
@@ -15,6 +12,9 @@
 #include "config.h"
 #include "audio_mixer.h"
 #include "input.h"
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_GFX.h>
+#include <ScopeDisplay.h>
 
 // Audio stack
 AudioSourceSD source("/", "wav");
@@ -49,10 +49,10 @@ float normalizeVolumeFromAdc(int raw) {
 // Button and VolumeManager moved to input.h / input.cpp
 
 Button buttons[BUTTON_COUNT] = {
-  Button(BUTTON_PINS[0], "/1.wav", false), // false = push-to-break (pressed reads HIGH)
-  Button(BUTTON_PINS[1], "/2.wav", false),
-  Button(BUTTON_PINS[2], "/3.wav", false),
-  Button(BUTTON_PINS[3], "/4.wav", false),
+  Button(BUTTON_PINS[0], "/1.wav", BUTTONS_ACTIVE_LOW),
+  Button(BUTTON_PINS[1], "/2.wav", BUTTONS_ACTIVE_LOW),
+  Button(BUTTON_PINS[2], "/3.wav", BUTTONS_ACTIVE_LOW),
+  Button(BUTTON_PINS[3], "/4.wav", BUTTONS_ACTIVE_LOW),
 };
 
 VolumeManager volume(VOLUME_POT_PIN);
