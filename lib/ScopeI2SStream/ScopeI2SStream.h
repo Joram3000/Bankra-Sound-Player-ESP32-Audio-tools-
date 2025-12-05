@@ -3,8 +3,7 @@
 
 #include <AudioTools.h>
 
-// Waveform buffer voor scope display
-#define WAVEFORM_SAMPLES 128  // Aantal samples (= display breedte)
+#include "config.h"
 
 /**
  * Custom output stream die samples captured voor waveform display
@@ -54,7 +53,7 @@ class ScopeI2SStream : public I2SStream {
             // Schaal terug naar int16_t bereik
             int16_t out = (int16_t)(scaled * 32767.0f);
             waveformBuffer[*waveformIndex] = out;
-            *waveformIndex = (*waveformIndex + 1) % WAVEFORM_SAMPLES;
+            *waveformIndex = (*waveformIndex + 1) % NUM_WAVEFORM_SAMPLES;
             xSemaphoreGive(*mutex);
           }
         }
