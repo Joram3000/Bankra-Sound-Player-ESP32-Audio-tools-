@@ -9,7 +9,12 @@ Button::Button(int pin, const char* samplePath, bool activeLow)
   : pin(pin), samplePath(samplePath), activeLow(activeLow) {}
 
 void Button::begin() {
-  pinMode(pin, INPUT_PULLUP);
+  // Configure internal pull resistor depending on activeLow.
+  // - activeLow == true: pressed == LOW, enable INPUT_PULLUP
+  // - activeLow == false: pressed == HIGH, enable INPUT_PULLDOWN (ESP32)
+  #if defined(INPUT_PULLDOWN)
+    pinMode(pin, activeLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+  #endif
   rawState = false;
   debouncedState = false;
   lastDebounceTime = 0;
