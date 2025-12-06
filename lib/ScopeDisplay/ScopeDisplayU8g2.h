@@ -21,8 +21,8 @@ class ScopeDisplayU8g2 {
     int* waveformIndex;
     int waveformSamples;
 
-    float horizZoom = 2.0f;
-    float vertScale = 1.0f;
+    float horizZoom = 1.0f;
+    float vertScale = 3.0f;
     float lastDisplayY = NAN;
 
     String currentFile;

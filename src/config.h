@@ -15,7 +15,7 @@
 #define DISPLAY_DRIVER DISPLAY_DRIVER_U8G2_SSD1306
 constexpr int DISPLAY_WIDTH  = 128;
 constexpr int DISPLAY_HEIGHT = 64;
-constexpr int NUM_WAVEFORM_SAMPLES = DISPLAY_WIDTH;
+constexpr int NUM_WAVEFORM_SAMPLES = DISPLAY_WIDTH / 2;
 constexpr uint8_t DISPLAY_I2C_ADDRESS = 0x3C;
 constexpr bool DISPLAY_INVERT_COLORS = false;
 
@@ -32,7 +32,7 @@ constexpr bool DISPLAY_INVERT_COLORS = false;
 // -----------------------------------------------------------------------------
 // User controls
 // -----------------------------------------------------------------------------
-constexpr std::array<int, 4> BUTTON_PINS = {13, 4, 16, 17};
+constexpr std::array<int, 6> BUTTON_PINS = {13, 4, 16, 17, 12, 25};
 constexpr size_t BUTTON_COUNT = BUTTON_PINS.size();
 constexpr bool BUTTONS_ACTIVE_LOW = true;
 constexpr int SWITCH_PIN_DELAY_SEND = 27;
@@ -49,11 +49,19 @@ constexpr float VOLUME_DEADBAND = 0.12f;
 // Master output filtering
 constexpr bool  MASTER_LOW_PASS_ENABLED   = true;
 constexpr float MASTER_LOW_PASS_CUTOFF_HZ = 500.0f;
-constexpr float MASTER_LOW_PASS_Q         = 0.5071f;
+constexpr float MASTER_LOW_PASS_Q         = 0.4071f;
 constexpr float MASTER_LOW_PASS_MIN_HZ    = 20.0f;
 constexpr float MASTER_LOW_PASS_MAX_HZ    = 6000.0f;
 constexpr float MASTER_LOW_PASS_CUTOFF_SMOOTH_ALPHA = 0.48f; // 0..1
 constexpr float MASTER_LOW_PASS_CUTOFF_DEADBAND_HZ  = 4.0f;
+
+// Master bus compression (gentle glue on final output)
+constexpr bool     MASTER_COMPRESSOR_ENABLED          = true;
+constexpr uint16_t MASTER_COMPRESSOR_ATTACK_MS        = 12;
+constexpr uint16_t MASTER_COMPRESSOR_RELEASE_MS       = 140;
+constexpr uint16_t MASTER_COMPRESSOR_HOLD_MS          = 16;
+constexpr uint8_t  MASTER_COMPRESSOR_THRESHOLD_PERCENT= 18;  // relative to full-scale
+constexpr float    MASTER_COMPRESSOR_RATIO            = 0.45f; // 0..1 (lower = stronger)
 
 // --- Additional hardware pins for new features ---
 constexpr int SD_CS_PIN    = 5;  // already in use by SD
@@ -61,17 +69,3 @@ constexpr int SPI_SCK_PIN  = 18; // SCLK (shared)
 constexpr int SPI_MOSI_PIN = 23; // MOSI (shared)
 constexpr int SPI_MISO_PIN = 19; // MISO (shared)
 
-// Color TFT (SPI) - module pins: SCL(SCLK), SDA(MOSI), RES, DC, CS, BLK
-constexpr int TFT_SCLK_PIN = SPI_SCK_PIN;
-constexpr int TFT_MOSI_PIN = SPI_MOSI_PIN;
-constexpr int TFT_CS_PIN   = 25; // chip select for TFT (choose free GPIO)
-constexpr int TFT_DC_PIN   = 26; // data/command
-constexpr int TFT_RST_PIN  = 33; // reset
-constexpr int TFT_BLK_PIN  = 21; // backlight control (PWM optional)
-
-// Extra inputs: 2 extra buttons + 1 extra switch
-constexpr std::array<int, 2> EXTRA_BUTTON_PINS = {37, 38};
-
-// Notes:
-// - GPIO34..39 are input-only (geen OUTPUT, geen interne pull-ups). Gebruik externe pull-ups.
-// - Avoid using pins 6..11 (flash), and be cautious with 0,2,12 (boot straps).

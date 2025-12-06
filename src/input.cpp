@@ -53,7 +53,13 @@ VolumeManager::VolumeManager(int adcPin)
 
 extern AudioPlayer player; // defined in bankrasampler.cpp
 
-float normalizeVolumeFromAdc(int raw);
+namespace {
+float normalizeVolumeFromAdc(int raw) {
+  const float adcMax = 4095.0f;
+  float v = 1.0f - (static_cast<float>(raw) / adcMax);
+  return constrain(v, 0.0f, 1.0f);
+}
+}
 
 void VolumeManager::begin() {
   pinMode(adcPin, INPUT);

@@ -20,6 +20,7 @@ WAVDecoder wavDecoder;
 AudioPlayer player(source, i2s, wavDecoder);
 DryWetMixerStream mixerStream;
 Delay delayEffect;
+DryWetMixerStream* DryWetMixerStream::s_instance = nullptr;
 
 // Display & scope (moved to ui module)
 #include "ui.h"
@@ -39,10 +40,6 @@ bool filterSwitchRawState = false;
 bool filterSwitchDebouncedState = false;
 uint32_t filterSwitchLastDebounceTime = 0;
 
-// Helpers
-// (Inlined path handling where needed; `makeAbsolutePath` removed because
-// the project always uses the same base path.)
-
 float normalizeVolumeFromAdc(int raw) {
   const float adcMax = 4095.0f;
   float v = 1.0f - ((float)raw / adcMax);
@@ -56,6 +53,8 @@ Button buttons[BUTTON_COUNT] = {
   Button(BUTTON_PINS[1], "/2.wav", BUTTONS_ACTIVE_LOW),
   Button(BUTTON_PINS[2], "/3.wav", BUTTONS_ACTIVE_LOW),
   Button(BUTTON_PINS[3], "/4.wav", BUTTONS_ACTIVE_LOW),
+  Button(BUTTON_PINS[4], "/5.wav", BUTTONS_ACTIVE_LOW),
+  Button(BUTTON_PINS[5], "/6.wav", BUTTONS_ACTIVE_LOW),
 };
 
 VolumeManager volume(POT_PIN);
@@ -92,6 +91,12 @@ void initAudio() {
   mixerStream.setAudioInfo(mixInfo);
   mixerStream.updateEffectSampleRate(effectiveSampleRate);
   mixerStream.setMix(1.0f, 0.75f);
+  mixerStream.configureMasterCompressor(MASTER_COMPRESSOR_ATTACK_MS,
+                                        MASTER_COMPRESSOR_RELEASE_MS,
+                                        MASTER_COMPRESSOR_HOLD_MS,
+                                        MASTER_COMPRESSOR_THRESHOLD_PERCENT,
+                                        MASTER_COMPRESSOR_RATIO,
+                                        MASTER_COMPRESSOR_ENABLED);
   delayEffect.setDuration(420);      // milliseconds
   delayEffect.setDepth(0.40f);       // wet mix ratio handled in mixer
   delayEffect.setFeedback(0.45f);    // repeats

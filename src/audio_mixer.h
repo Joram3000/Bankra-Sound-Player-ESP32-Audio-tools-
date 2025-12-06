@@ -58,6 +58,40 @@ public:
 #endif
   }
 
+  void configureMasterCompressor(uint16_t attackMs, uint16_t releaseMs,
+                                 uint16_t holdMs, uint8_t thresholdPercent,
+                                 float compressionRatio,
+                                 bool enabled = true) {
+    compAttackMs = attackMs;
+    compReleaseMs = releaseMs;
+    compHoldMs = holdMs;
+    compThresholdPercent = thresholdPercent;
+    compRatio = compressionRatio;
+    masterCompressorEnabled = enabled;
+    refreshMasterCompressor();
+#if DEBUG_MIXER
+    Serial.print("[DryWetMixer] configureMasterCompressor attack=");
+    Serial.print(compAttackMs);
+    Serial.print(" release=");
+    Serial.print(compReleaseMs);
+    Serial.print(" hold=");
+    Serial.print(compHoldMs);
+    Serial.print(" threshold%=");
+    Serial.print(compThresholdPercent);
+    Serial.print(" ratio=");
+    Serial.print(compRatio, 3);
+    Serial.print(" enabled=");
+    Serial.println(masterCompressorEnabled ? "yes" : "no");
+#endif
+  }
+
+  void setMasterCompressorEnabled(bool enabled) {
+    masterCompressorEnabled = enabled;
+    if (masterCompressor) {
+      masterCompressor->setActive(enabled);
+    }
+  }
+
   void setInputLowPassCutoff(float cutoffHz) {
     inputFilterCutoff = cutoffHz;
     if (!inputFilterEnabled || !inputFilterInitialized) {
@@ -95,6 +129,7 @@ public:
     mixBuffer.clear();
     mixBuffer.reserve(reserveFrames * channels);
     refreshInputFilterState();
+  refreshMasterCompressor();
 #if DEBUG_MIXER
     Serial.print("[DryWetMixer] setAudioInfo sr=");
     Serial.print(sampleRate);
@@ -228,6 +263,13 @@ private:
   float inputFilterCutoff = 0.0f;
   float inputFilterQ = 0.7071f;
   std::vector<float> filteredDryScratch;
+  std::unique_ptr<Compressor> masterCompressor;
+  bool masterCompressorEnabled = false;
+  uint16_t compAttackMs = 10;
+  uint16_t compReleaseMs = 120;
+  uint16_t compHoldMs = 10;
+  uint8_t compThresholdPercent = 15;
+  float compRatio = 0.5f;
 
   // debug counters
   uint32_t debugFrameCounter = 0;
@@ -239,7 +281,7 @@ private:
   CallbackStream cbStream;
 
   // static instance pointer for callback forwarding (assumes single mixer)
-  static inline DryWetMixerStream* s_instance = nullptr;
+  static DryWetMixerStream* s_instance;
 
   // static callback invoked by CallbackStream; forwards to instance method
   static size_t staticUpdate(uint8_t* data, size_t len) {
@@ -326,7 +368,11 @@ private:
         }
         if (mixedVal > 32767) mixedVal = 32767;
         if (mixedVal < -32768) mixedVal = -32768;
-        mixed[frame * channels + ch] = static_cast<int16_t>(mixedVal);
+        int16_t outputSample = static_cast<int16_t>(mixedVal);
+        if (masterCompressor) {
+          outputSample = masterCompressor->process(static_cast<effect_t>(outputSample));
+        }
+        mixed[frame * channels + ch] = outputSample;
       }
     }
 
@@ -439,6 +485,16 @@ private:
     if (filter == nullptr) return sample;
     return filter->process(sample);
   }
+
+  void refreshMasterCompressor() {
+    if (sampleRate == 0) {
+      masterCompressor.reset();
+      return;
+    }
+  masterCompressor.reset(new Compressor(sampleRate, compAttackMs,
+                      compReleaseMs, compHoldMs,
+                      compThresholdPercent, compRatio));
+    masterCompressor->setActive(masterCompressorEnabled);
+  }
 };
 
-// static instance pointer defined inline in-class
