@@ -58,6 +58,22 @@ public:
 #endif
   }
 
+  void setInputLowPassCutoff(float cutoffHz) {
+    inputFilterCutoff = cutoffHz;
+    if (!inputFilterEnabled || !inputFilterInitialized) {
+      return;
+    }
+    if (inputLowPassFilters.empty() || sampleRate == 0) {
+      return;
+    }
+    for (auto &filter : inputLowPassFilters) {
+      if (filter) {
+        filter->begin(inputFilterCutoff, static_cast<float>(sampleRate),
+                      inputFilterQ);
+      }
+    }
+  }
+
   void setAudioInfo(AudioInfo newInfo) override {
     AudioStream::setAudioInfo(newInfo);
     if (dryOutput) dryOutput->setAudioInfo(newInfo);
@@ -384,19 +400,30 @@ private:
 
   void refreshInputFilterState() {
     inputFilterInitialized = false;
-    inputLowPassFilters.clear();
-    filteredDryScratch.clear();
-    if (!inputFilterEnabled || sampleRate == 0 || channels <= 0) {
+    if (channels <= 0) {
+      inputLowPassFilters.clear();
+      filteredDryScratch.clear();
       return;
     }
-    inputLowPassFilters.resize(static_cast<size_t>(channels));
+
+    if (!inputFilterEnabled || sampleRate == 0) {
+      filteredDryScratch.assign(static_cast<size_t>(channels), 0.0f);
+      return;
+    }
+
+    if (inputLowPassFilters.size() < static_cast<size_t>(channels)) {
+      inputLowPassFilters.resize(static_cast<size_t>(channels));
+    }
+
     for (int ch = 0; ch < channels; ++ch) {
-      inputLowPassFilters[ch].reset(new LowPassFilter<float>());
+      if (!inputLowPassFilters[ch]) {
+        inputLowPassFilters[ch].reset(new LowPassFilter<float>());
+      }
       inputLowPassFilters[ch]->begin(inputFilterCutoff,
                                      static_cast<float>(sampleRate),
                                      inputFilterQ);
     }
-    filteredDryScratch.resize(static_cast<size_t>(channels), 0.0f);
+    filteredDryScratch.assign(static_cast<size_t>(channels), 0.0f);
     inputFilterInitialized = true;
   }
 

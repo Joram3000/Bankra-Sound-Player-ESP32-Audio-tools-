@@ -49,7 +49,11 @@ constexpr float VOLUME_DEADBAND = 0.12f;
 // Master output filtering
 constexpr bool  MASTER_LOW_PASS_ENABLED   = true;
 constexpr float MASTER_LOW_PASS_CUTOFF_HZ = 500.0f;
-constexpr float MASTER_LOW_PASS_Q         = 1.9071f;
+constexpr float MASTER_LOW_PASS_Q         = 0.5071f;
+constexpr float MASTER_LOW_PASS_MIN_HZ    = 20.0f;
+constexpr float MASTER_LOW_PASS_MAX_HZ    = 6000.0f;
+constexpr float MASTER_LOW_PASS_CUTOFF_SMOOTH_ALPHA = 0.48f; // 0..1
+constexpr float MASTER_LOW_PASS_CUTOFF_DEADBAND_HZ  = 4.0f;
 
 // --- Additional hardware pins for new features ---
 constexpr int SD_CS_PIN    = 5;  // already in use by SD

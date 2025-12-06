@@ -27,6 +27,7 @@ Delay delayEffect;
 // State
 int activeButtonIndex = -1;
 String currentSamplePath = "";
+float currentFilterCutoffHz = MASTER_LOW_PASS_CUTOFF_HZ;
 
 // Switch state (pin 27, one side to GND -> use INPUT_PULLUP; LOW = ON)
 bool switchRawState = false;
@@ -105,7 +106,7 @@ void initAudio() {
 }
 
 void applyFilterSwitchState(bool enabled) {
-  mixerStream.configureMasterLowPass(MASTER_LOW_PASS_CUTOFF_HZ,
+  mixerStream.configureMasterLowPass(currentFilterCutoffHz,
                                      MASTER_LOW_PASS_Q, enabled);
 }
 
@@ -151,6 +152,12 @@ void setup() {
   initDisplay();
   initAudio();
   volume.begin();
+  volume.setCutoffUpdateCallback([](float cutoffHz) {
+    currentFilterCutoffHz = cutoffHz;
+    mixerStream.setInputLowPassCutoff(cutoffHz);
+  });
+  volume.setFilterControlActive(filterSwitchDebouncedState);
+  volume.forceImmediateSample();
   // Keep the effect audible by default, but control whether we send audio
   // into the delay via the hardware switch (setSendActive).
   mixerStream.setEffectActive(true);
@@ -183,6 +190,8 @@ void loop() {
       filterRaw != filterSwitchDebouncedState) {
     filterSwitchDebouncedState = filterRaw;
     applyFilterSwitchState(filterSwitchDebouncedState);
+    volume.setFilterControlActive(filterSwitchDebouncedState);
+    volume.forceImmediateSample();
   }
 
   // buttons
