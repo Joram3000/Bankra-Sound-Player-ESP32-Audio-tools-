@@ -62,11 +62,6 @@ constexpr int TFT_DC_PIN   = 26; // data/command
 constexpr int TFT_RST_PIN  = 33; // reset
 constexpr int TFT_BLK_PIN  = 21; // backlight control (PWM optional)
 
-// Encoder (A/B + switch) - using input-only pins: external pull-ups required
-constexpr int ENC_PIN_A = 35;
-constexpr int ENC_PIN_B = 36;
-constexpr int ENC_PIN_SW = 39;
-
 // Extra inputs: 2 extra buttons + 1 extra switch
 constexpr std::array<int, 2> EXTRA_BUTTON_PINS = {37, 38};
 

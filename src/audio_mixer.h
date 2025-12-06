@@ -20,6 +20,9 @@ public:
 #if DEBUG_MIXER
     Serial.println("[DryWetMixer] begin()");
 #endif
+    // keep delay active so internal buffer always advances (prevents abrupt
+    // stopping of delay tails when toggling routing)
+    if (delay) delay->setActive(true);
   }
 
   void setMix(float dry, float wet) {
@@ -67,15 +70,17 @@ public:
   }
 
   void setEffectActive(bool active) {
-    if (delay) delay->setActive(active);
-    effectEnabled = active;
-    targetWetMix = effectEnabled ? wetMixActive : 0.0f;
-    scheduleWetRamp();
+  // Do not disable the Delay object itself here. We want the delay line to
+  // keep running so echoes / feedback continue even when the wet mix is
+  // turned off. The effectEnabled flag only controls audibility (wet mix).
+  effectEnabled = active;
+  targetWetMix = effectEnabled ? wetMixActive : 0.0f;
+  scheduleWetRamp();
 #if DEBUG_MIXER
-    Serial.print("[DryWetMixer] setEffectActive -> ");
-    Serial.print(active ? "ON" : "OFF");
-    Serial.print(" targetWet=");
-    Serial.println(targetWetMix, 4);
+  Serial.print("[DryWetMixer] setEffectActive -> ");
+  Serial.print(active ? "ON" : "OFF");
+  Serial.print(" targetWet=");
+  Serial.println(targetWetMix, 4);
 #endif
   }
 
@@ -89,11 +94,18 @@ public:
 #endif
   }
 
-  void triggerAttackFade() {
-    attackFramesRemaining = attackFrames;
+  // triggerAttackFade removed: delay always runs and we don't need a
+  // per-play attack fade. Use setEffectActive()/setSendActive() to control
+  // audibility and routing.
+
+  // When true we actually feed the incoming audio into the delay. When false
+  // we still call delay->process(0) so the delay's internal buffer advances
+  // and the effect tail keeps playing without new input.
+  void setSendActive(bool send) {
+    sendActive = send;
 #if DEBUG_MIXER
-    Serial.print("[DryWetMixer] triggerAttackFade frames=");
-    Serial.println(attackFrames);
+    Serial.print("[DryWetMixer] setSendActive -> ");
+    Serial.println(send ? "SEND" : "NOSEND");
 #endif
   }
 
@@ -161,6 +173,9 @@ private:
   uint32_t fadeFrames = 1;
   uint32_t wetRampFramesRemaining = 0;
   bool effectEnabled = false;
+  // When false we do not feed the incoming audio into the delay; the delay
+  // still runs and is called with silence (0) so its buffer advances.
+  bool sendActive = false;
   uint32_t attackFrames = 1;
   uint32_t attackFramesRemaining = 0;
 
@@ -200,7 +215,10 @@ private:
       }
       mono /= channels;
 
-      effect_t wetSample = delay->process(static_cast<effect_t>(mono));
+  // Always run the delay process so its internal buffer advances.
+  // If sendActive is false we feed silence (0) into the delay so the
+  // delay's feedback/echo tail continues but no new input is injected.
+  effect_t wetSample = delay->process(sendActive ? static_cast<effect_t>(mono) : 0);
       float wetLevel = advanceWetMix();
       float attackGain = advanceAttackGain();
 

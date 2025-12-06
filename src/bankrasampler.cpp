@@ -115,7 +115,8 @@ bool playSampleForButton(size_t idx) {
   }
   currentSamplePath = full;
   player.play();
-  mixerStream.triggerAttackFade();
+  // No per-play attack fade: the delay always runs and sending is controlled
+  // by the hardware switch via setSendActive().
   activeButtonIndex = (int)idx;
   return true;
 }
@@ -136,7 +137,10 @@ void setup() {
   initDisplay();
   initAudio();
   volume.begin();
-  mixerStream.setEffectActive(switchDebouncedState);
+  // Keep the effect audible by default, but control whether we send audio
+  // into the delay via the hardware switch (setSendActive).
+  mixerStream.setEffectActive(true);
+  mixerStream.setSendActive(switchDebouncedState);
 }
 
 void loop() {
@@ -151,7 +155,8 @@ void loop() {
   }
   if ((now - switchLastDebounceTime) > BUTTON_DEBOUNCE_MS && raw != switchDebouncedState) {
     switchDebouncedState = raw;
-    mixerStream.setEffectActive(switchDebouncedState);
+    // Switch now controls whether we send audio into the delay line.
+    mixerStream.setSendActive(switchDebouncedState);
   }
 
   // buttons
