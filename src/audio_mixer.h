@@ -3,9 +3,12 @@
 
 #include <AudioTools.h>
 #include <vector>
+#include <memory>
 #include <algorithm>
 #include "AudioTools/CoreAudio/AudioEffects/AudioEffects.h"
+#include "AudioTools/CoreAudio/AudioFilter/Filter.h"
 #include <Arduino.h> // voor Serial debug
+#include "config.h"
 
 // Enable/disable debug prints (0 = uit, 1 = aan)
 #ifndef DEBUG_MIXER
@@ -39,6 +42,22 @@ public:
 #endif
   }
 
+  void configureMasterLowPass(float cutoffHz, float q = 0.7071f,
+                              bool enabled = true) {
+    masterFilterCutoff = cutoffHz;
+    masterFilterQ = q;
+    masterFilterEnabled = enabled;
+    refreshMasterFilterState();
+#if DEBUG_MIXER
+    Serial.print("[DryWetMixer] configureMasterLowPass cutoff=");
+    Serial.print(masterFilterCutoff);
+    Serial.print(" q=");
+    Serial.print(masterFilterQ, 4);
+    Serial.print(" enabled=");
+    Serial.println(masterFilterEnabled ? "yes" : "no");
+#endif
+  }
+
   void setAudioInfo(AudioInfo newInfo) override {
     AudioStream::setAudioInfo(newInfo);
     if (dryOutput) dryOutput->setAudioInfo(newInfo);
@@ -59,6 +78,7 @@ public:
     const size_t reserveFrames = 256; // tweak if needed
     mixBuffer.clear();
     mixBuffer.reserve(reserveFrames * channels);
+  refreshMasterFilterState();
 #if DEBUG_MIXER
     Serial.print("[DryWetMixer] setAudioInfo sr=");
     Serial.print(sampleRate);
@@ -129,10 +149,6 @@ public:
 #endif
   }
 
-  // triggerAttackFade removed: delay always runs and we don't need a
-  // per-play attack fade. Use setEffectActive()/setSendActive() to control
-  // audibility and routing.
-
   // When true we actually feed the incoming audio into the delay. When false
   // we still call delay->process(0) so the delay's internal buffer advances
   // and the effect tail keeps playing without new input.
@@ -188,6 +204,13 @@ private:
   bool sendActive = false;
   uint32_t attackFrames = 1;
   uint32_t attackFramesRemaining = 0;
+
+  // Master filter state
+  std::vector<std::unique_ptr<LowPassFilter<float>>> masterLowPassFilters;
+  bool masterFilterEnabled = false;
+  bool masterFilterInitialized = false;
+  float masterFilterCutoff = 0.0f;
+  float masterFilterQ = 0.7071f;
 
   // debug counters
   uint32_t debugFrameCounter = 0;
@@ -283,6 +306,8 @@ private:
       }
     }
 
+    applyMasterLowPass(mixed, frames);
+
     // Write mixed samples back into chunk
     if (sampleBytes == sizeof(int16_t)) {
       memcpy(chunk, mixed, sampleCount * sizeof(int16_t));
@@ -349,6 +374,44 @@ private:
     if (gain < 0.0f) gain = 0.0f;
     if (gain > 1.0f) gain = 1.0f;
     return gain;
+  }
+
+  void refreshMasterFilterState() {
+    masterFilterInitialized = false;
+    masterLowPassFilters.clear();
+    if (!masterFilterEnabled || sampleRate == 0 || channels <= 0) {
+      return;
+    }
+    masterLowPassFilters.resize(static_cast<size_t>(channels));
+    for (int ch = 0; ch < channels; ++ch) {
+      masterLowPassFilters[ch].reset(new LowPassFilter<float>());
+      masterLowPassFilters[ch]->begin(masterFilterCutoff,
+                                      static_cast<float>(sampleRate),
+                                      masterFilterQ);
+    }
+    masterFilterInitialized = true;
+  }
+
+  void applyMasterLowPass(int16_t* samples, size_t frames) {
+    if (!masterFilterEnabled || !masterFilterInitialized ||
+        masterLowPassFilters.size() < static_cast<size_t>(channels)) {
+      return;
+    }
+    size_t idx = 0;
+    for (size_t frame = 0; frame < frames; ++frame) {
+      for (int ch = 0; ch < channels; ++ch) {
+        LowPassFilter<float>* filter = masterLowPassFilters[ch].get();
+        if (filter == nullptr) {
+          ++idx;
+          continue;
+        }
+        float filtered = filter->process(static_cast<float>(samples[idx]));
+        if (filtered > 32767.0f) filtered = 32767.0f;
+        if (filtered < -32768.0f) filtered = -32768.0f;
+        samples[idx] = static_cast<int16_t>(filtered);
+        ++idx;
+      }
+    }
   }
 };
 

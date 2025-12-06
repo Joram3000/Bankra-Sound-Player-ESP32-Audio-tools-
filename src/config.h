@@ -35,8 +35,8 @@ constexpr bool DISPLAY_INVERT_COLORS = false;
 constexpr std::array<int, 4> BUTTON_PINS = {13, 4, 16, 17};
 constexpr size_t BUTTON_COUNT = BUTTON_PINS.size();
 constexpr bool BUTTONS_ACTIVE_LOW = true;
-constexpr int SWITCH_PIN = 27;
-constexpr int EXTRA_SWITCH_PIN = 26;
+constexpr int SWITCH_PIN_DELAY_SEND = 27;
+constexpr int SWITCH_PIN_ENABLE_FILTER = 26;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
 constexpr uint32_t BUTTON_FADE_MS = 12;
@@ -46,10 +46,13 @@ constexpr int VOLUME_POT_PIN = 34;
 constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
 constexpr float VOLUME_DEADBAND = 0.12f;
 
+// Master output filtering
+constexpr bool  MASTER_LOW_PASS_ENABLED   = true;
+constexpr float MASTER_LOW_PASS_CUTOFF_HZ = 1200.0f;
+constexpr float MASTER_LOW_PASS_Q         = 0.9071f;
+
 // --- Additional hardware pins for new features ---
 constexpr int SD_CS_PIN    = 5;  // already in use by SD
-// SPI bus (shared with SD)
-// Note: SCK/MOSI/MISO are the VSPI defaults used by SD.begin()
 constexpr int SPI_SCK_PIN  = 18; // SCLK (shared)
 constexpr int SPI_MOSI_PIN = 23; // MOSI (shared)
 constexpr int SPI_MISO_PIN = 19; // MISO (shared)

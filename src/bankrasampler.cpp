@@ -84,6 +84,8 @@ void initAudio() {
   mixInfo.channels = cfg.channels > 0 ? cfg.channels : 2;
   mixInfo.bits_per_sample = cfg.bits_per_sample > 0 ? cfg.bits_per_sample : 16;
   mixerStream.setAudioInfo(mixInfo);
+  mixerStream.configureMasterLowPass(MASTER_LOW_PASS_CUTOFF_HZ, MASTER_LOW_PASS_Q,
+                                     MASTER_LOW_PASS_ENABLED);
   mixerStream.updateEffectSampleRate(effectiveSampleRate);
   mixerStream.setMix(1.0f, 0.75f);
   delayEffect.setDuration(420);      // milliseconds
@@ -129,8 +131,8 @@ void setup() {
   for (size_t i = 0; i < BUTTON_COUNT; ++i) buttons[i].begin();
 
   // init switch pin
-  pinMode(SWITCH_PIN, INPUT_PULLUP);
-  bool init = (digitalRead(SWITCH_PIN) == LOW);
+  pinMode(SWITCH_PIN_DELAY_SEND, INPUT_PULLUP);
+  bool init = (digitalRead(SWITCH_PIN_DELAY_SEND) == LOW);
   switchRawState = switchDebouncedState = init;
 
   initSd();
@@ -148,7 +150,7 @@ void loop() {
   volume.update(now);
 
   // Read switch (debounced) - pin wired to GND on one side; LOW = ON
-  bool raw = (digitalRead(SWITCH_PIN) == LOW);
+  bool raw = (digitalRead(SWITCH_PIN_DELAY_SEND) == LOW);
   if (raw != switchRawState) {
     switchLastDebounceTime = now;
     switchRawState = raw;
