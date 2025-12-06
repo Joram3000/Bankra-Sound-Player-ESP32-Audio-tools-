@@ -4,11 +4,41 @@ Een compacte, polyfone **sample player** gebouwd rond een **ESP32**, met een **I
 
 Projectdoel:
 
-* samples triggeren via vier knoppen.
-* **Press = play**, **release = immediate stop**.
-* Focus op **lage latency**, stabiele I2S‑output.
+- samples triggeren via vier knoppen.
+- **Press = play**, **release = immediate stop**.
+- Focus op **lage latency**, stabiele I2S‑output.
 
 ---
+
+## Configuratie
+
+Pas `src/config.h` aan om het displaytype en de resolutie te kiezen.
+
+```cpp
+#define DISPLAY_DRIVER_ADAFRUIT_SSD1306 0
+#define DISPLAY_DRIVER_U8G2_SSD1306     1
+
+constexpr int DISPLAY_DRIVER = DISPLAY_DRIVER_ADAFRUIT_SSD1306; // zet op U8G2 om te wisselen
+constexpr int DISPLAY_WIDTH  = 128;
+constexpr int DISPLAY_HEIGHT = 64;
+constexpr bool DISPLAY_INVERT_COLORS = false;
+```
+
+Er bestaan nu twee ScopeDisplay-varianten:
+
+- `lib/ScopeDisplay/ScopeDisplay.h` – gebruikt `Adafruit_SSD1306`/`Adafruit_GFX`.
+- `lib/ScopeDisplay/ScopeDisplayU8g2.h` – gebruikt `U8g2`.
+
+Door de `DISPLAY_DRIVER`-waarde te wisselen kies je welke header wordt geïnclude.
+Gebruik je een ander U8g2-board (SH1106, flips, software I2C)? Zet dan bovenaan `config.h`
+een override, bijvoorbeeld:
+
+```cpp
+#define DISPLAY_U8G2_CLASS U8G2_SH1106_128X64_NONAME_F_HW_I2C
+#define DISPLAY_U8G2_CTOR_ARGS U8G2_R2, U8X8_PIN_NONE
+```
+
+De UI print bij opstarten welke backend actief is zodat je snel kunt checken.
 
 ## Hardware
 
@@ -57,18 +87,18 @@ Alle bestanden moeten 16‑bit PCM WAV zijn.
 
 ### Startup
 
-* Initialiseer SD, DAC (I2S), en OLED.
-* Toon een korte statusmelding (“Sample Player Ready”).
+- Initialiseer SD, DAC (I2S), en OLED.
+- Toon een korte statusmelding (“Sample Player Ready”).
 
 ### Knoppen
 
-* Config: `INPUT_PULLUP`, LOW = ingedrukt.
-* Detecteer **edge events** (pressed/released).
+- Config: `INPUT_PULLUP`, LOW = ingedrukt.
+- Detecteer **edge events** (pressed/released).
 
 ### Audio‐afhandeling
 
-* Elke knop triggert een eigen sample.
-* Structuur:
+- Elke knop triggert een eigen sample.
+- Structuur:
 
 ```cpp
 struct SampleSlot {
@@ -78,9 +108,9 @@ struct SampleSlot {
 };
 ```
 
-* Bij indrukken → sample starten.
-* Bij loslaten → sample onmiddellijk stoppen.
-* Polyfonie ondersteund door meerdere onafhankelijke spelers.
+- Bij indrukken → sample starten.
+- Bij loslaten → sample onmiddellijk stoppen.
+- Polyfonie ondersteund door meerdere onafhankelijke spelers.
 
 ### OLED output
 
@@ -92,8 +122,8 @@ Het scherm wordt alleen geüpdatet bij statuswijzigingen.
 
 ## Performance
 
-* Geoptimaliseerde I2S‑bufferinstellingen voor minimale latency.
-* Gebruik van `AudioPlayer` of `AudioGeneratorWAV` uit AudioTools.
-* Foutmeldingen via Serial (`SD init fail`, `missing file`, etc.).
+- Geoptimaliseerde I2S‑bufferinstellingen voor minimale latency.
+- Gebruik van `AudioPlayer` of `AudioGeneratorWAV` uit AudioTools.
+- Foutmeldingen via Serial (`SD init fail`, `missing file`, etc.).
 
 ---

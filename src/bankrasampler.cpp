@@ -12,9 +12,6 @@
 #include "config.h"
 #include "audio_mixer.h"
 #include "input.h"
-#include <Adafruit_SSD1306.h>
-#include <Adafruit_GFX.h>
-#include <ScopeDisplay.h>
 
 // Audio stack
 AudioSourceSD source("/", "wav");

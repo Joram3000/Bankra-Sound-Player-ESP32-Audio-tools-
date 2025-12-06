@@ -1,21 +1,49 @@
 // ui.cpp - display + scope implementation moved out of bankrasampler.cpp
 #include "ui.h"
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <AudioTools.h>
+#include "config.h"
 
-// Create display and scope objects here
-Adafruit_SSD1306 display(128, 64, &Wire, -1);
-static int16_t waveformBuffer[WAVEFORM_SAMPLES];
+#include <AudioTools.h>
+#include <Wire.h>
+
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_ADAFRUIT_SSD1306
+  #include <Adafruit_GFX.h>
+  #include <Adafruit_SSD1306.h>
+  #include <ScopeDisplay.h>
+  
+#elif DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  #include <U8g2lib.h>
+  #include <ScopeDisplayU8g2.h>
+#ifndef DISPLAY_U8G2_CLASS
+  #define DISPLAY_U8G2_CLASS U8G2_SSD1306_128X64_NONAME_F_HW_I2C
+#endif
+#ifndef DISPLAY_U8G2_CTOR_ARGS
+  #define DISPLAY_U8G2_CTOR_ARGS U8G2_R0, U8X8_PIN_NONE
+#endif
+#else
+  #error "Unsupported DISPLAY_DRIVER selection"
+#endif
+
+static int16_t waveformBuffer[NUM_WAVEFORM_SAMPLES];
 static int waveformIndex = 0;
-static ScopeDisplay scopeDisplay(&display, waveformBuffer, &waveformIndex);
+
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_ADAFRUIT_SSD1306
+  static Adafruit_SSD1306 display(DISPLAY_WIDTH, DISPLAY_HEIGHT, &Wire, -1);
+  static ScopeDisplay scopeDisplay(&display, waveformBuffer, &waveformIndex, NUM_WAVEFORM_SAMPLES);
+#elif DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  static DISPLAY_U8G2_CLASS display(DISPLAY_U8G2_CTOR_ARGS);
+  static ScopeDisplayU8g2 scopeDisplay(&display, waveformBuffer, &waveformIndex, NUM_WAVEFORM_SAMPLES);
+#endif
+
 ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, scopeDisplay.getMutex());
 
 bool initUi() {
-  // initialize the SSD1306-backed scopeDisplay
-  if (!scopeDisplay.begin(0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  Serial.println(F("[UI] Using U8g2 display backend"));
+#else
+  Serial.println(F("[UI] Using Adafruit SSD1306 backend"));
+#endif
+  if (!scopeDisplay.begin(DISPLAY_I2C_ADDRESS)) {
+    Serial.println(F("Display init failed"));
     return false;
   }
   return true;
@@ -29,6 +57,6 @@ void updateUi(bool playing, const String& filename) {
   if (playing != lastPlayingState || fn != lastFileName) {
     lastPlayingState = playing;
     lastFileName = fn;
-    // TODO: actual drawing code can be added here. For now we keep state tracking.
+    scopeDisplay.updateStatus(playing, fn);
   }
 }

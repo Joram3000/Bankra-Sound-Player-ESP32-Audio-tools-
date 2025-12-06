@@ -5,12 +5,21 @@
 #include <vector>
 #include <algorithm>
 #include "AudioTools/CoreAudio/AudioEffects/AudioEffects.h"
+#include <Arduino.h> // voor Serial debug
+
+// Enable/disable debug prints (0 = uit, 1 = aan)
+#ifndef DEBUG_MIXER
+#define DEBUG_MIXER 0
+#endif
 
 class DryWetMixerStream : public AudioStream {
 public:
   void begin(I2SStream& outStream, Delay& effect) {
     dryOutput = &outStream;
     delay = &effect;
+#if DEBUG_MIXER
+    Serial.println("[DryWetMixer] begin()");
+#endif
   }
 
   void setMix(float dry, float wet) {
@@ -19,6 +28,14 @@ public:
     targetWetMix = effectEnabled ? wetMixActive : 0.0f;
     currentWetMix = targetWetMix;
     wetRampFramesRemaining = 0;
+#if DEBUG_MIXER
+    Serial.print("[DryWetMixer] setMix dry=");
+    Serial.print(dryMix, 4);
+    Serial.print(" wetActive=");
+    Serial.print(wetMixActive, 4);
+    Serial.print(" targetWet=");
+    Serial.println(targetWetMix, 4);
+#endif
   }
 
   void setAudioInfo(AudioInfo newInfo) override {
@@ -39,6 +56,14 @@ public:
     const size_t reserveFrames = 256; // tweak if needed
     mixBuffer.clear();
     mixBuffer.reserve(reserveFrames * channels);
+#if DEBUG_MIXER
+    Serial.print("[DryWetMixer] setAudioInfo sr=");
+    Serial.print(sampleRate);
+    Serial.print(" bits=");
+    Serial.print(newInfo.bits_per_sample);
+    Serial.print(" ch=");
+    Serial.println(channels);
+#endif
   }
 
   void setEffectActive(bool active) {
@@ -46,22 +71,39 @@ public:
     effectEnabled = active;
     targetWetMix = effectEnabled ? wetMixActive : 0.0f;
     scheduleWetRamp();
+#if DEBUG_MIXER
+    Serial.print("[DryWetMixer] setEffectActive -> ");
+    Serial.print(active ? "ON" : "OFF");
+    Serial.print(" targetWet=");
+    Serial.println(targetWetMix, 4);
+#endif
   }
 
   void updateEffectSampleRate(uint32_t sampleRate) {
     if (delay && sampleRate > 0) {
       delay->setSampleRate(sampleRate);
     }
+#if DEBUG_MIXER
+    Serial.print("[DryWetMixer] updateEffectSampleRate ");
+    Serial.println(sampleRate);
+#endif
   }
 
   void triggerAttackFade() {
     attackFramesRemaining = attackFrames;
+#if DEBUG_MIXER
+    Serial.print("[DryWetMixer] triggerAttackFade frames=");
+    Serial.println(attackFrames);
+#endif
   }
 
   size_t write(const uint8_t* data, size_t len) override {
     if (!dryOutput || !delay || len == 0) return 0;
-    if (sampleBytes != sizeof(int16_t)) {
+    if (sampleBytes != sizeof(int16_t) && sampleBytes != sizeof(int32_t)) {
       // Unsupported format; just pass through dry
+#if DEBUG_MIXER
+      Serial.println("[DryWetMixer] Unsupported sample size, passing through dry");
+#endif
       return dryOutput->write(data, len);
     }
 
@@ -90,6 +132,12 @@ public:
       processed += chunkLen;
     }
 
+#if DEBUG_MIXER
+    // report how many bytes were processed this call
+    Serial.print("[DryWetMixer] write processed_bytes=");
+    Serial.println(processed);
+#endif
+
     return processed;
   }
 
@@ -104,6 +152,8 @@ private:
   int sampleBytes = sizeof(int16_t);
   int channels = 2;
   std::vector<int16_t> mixBuffer;
+  std::vector<int16_t> convertedInput;
+  std::vector<int32_t> expandedOutput;
   std::vector<uint8_t> pendingBuffer;
   size_t pendingLen = 0;
   size_t frameBytes = sizeof(int16_t) * 2;
@@ -114,11 +164,33 @@ private:
   uint32_t attackFrames = 1;
   uint32_t attackFramesRemaining = 0;
 
+  // debug counters
+  uint32_t debugFrameCounter = 0;
+  const uint32_t debugFrameInterval = 100; // print every N frames
+
   void mixAndWrite(const uint8_t* chunk, size_t chunkLen) {
     size_t frames = chunkLen / frameBytes;
     if (frames == 0) return;
-    mixBuffer.resize(frames * channels);
-    const int16_t* input = reinterpret_cast<const int16_t*>(chunk);
+    size_t sampleCount = frames * channels;
+    mixBuffer.resize(sampleCount);
+
+    const int16_t* input = nullptr;
+    if (sampleBytes == sizeof(int16_t)) {
+      input = reinterpret_cast<const int16_t*>(chunk);
+    } else if (sampleBytes == sizeof(int32_t)) {
+      convertedInput.resize(sampleCount);
+      const int32_t* input32 = reinterpret_cast<const int32_t*>(chunk);
+      for (size_t i = 0; i < sampleCount; ++i) {
+        int32_t value = input32[i] >> 16;
+        if (value > 32767) value = 32767;
+        if (value < -32768) value = -32768;
+        convertedInput[i] = static_cast<int16_t>(value);
+      }
+      input = convertedInput.data();
+    } else {
+      return;
+    }
+
     int16_t* mixed = mixBuffer.data();
 
     for (size_t frame = 0; frame < frames; ++frame) {
@@ -132,6 +204,22 @@ private:
       float wetLevel = advanceWetMix();
       float attackGain = advanceAttackGain();
 
+      // debug: print a sample occasionally to observe wet sample and levels
+#if DEBUG_MIXER
+      if ((debugFrameCounter++ % debugFrameInterval) == 0) {
+        Serial.print("[DryWetMixer] frameSample mono=");
+        Serial.print(mono);
+        Serial.print(" wetSample=");
+        Serial.print((int)wetSample);
+        Serial.print(" wetLevel=");
+        Serial.print(wetLevel, 4);
+        Serial.print(" dryMix=");
+        Serial.print(dryMix, 4);
+        Serial.print(" effectEnabled=");
+        Serial.println(effectEnabled ? "1" : "0");
+      }
+#endif
+
       for (int ch = 0; ch < channels; ++ch) {
         int32_t dryVal = input[frame * channels + ch];
         int32_t mixedVal = static_cast<int32_t>(dryMix * dryVal + wetLevel * wetSample);
@@ -143,8 +231,20 @@ private:
         mixed[frame * channels + ch] = static_cast<int16_t>(mixedVal);
       }
     }
+    writeMixedFrames(mixed, frames);
+  }
 
-    dryOutput->write(reinterpret_cast<uint8_t*>(mixed), frames * frameBytes);
+  void writeMixedFrames(const int16_t* mixed, size_t frames) {
+    size_t sampleCount = frames * channels;
+    if (sampleBytes == sizeof(int16_t)) {
+      dryOutput->write(reinterpret_cast<const uint8_t*>(mixed), sampleCount * sizeof(int16_t));
+    } else if (sampleBytes == sizeof(int32_t)) {
+      expandedOutput.resize(sampleCount);
+      for (size_t i = 0; i < sampleCount; ++i) {
+        expandedOutput[i] = static_cast<int32_t>(mixed[i]) << 16;
+      }
+      dryOutput->write(reinterpret_cast<const uint8_t*>(expandedOutput.data()), sampleCount * sizeof(int32_t));
+    }
   }
 
   void scheduleWetRamp() {

@@ -1,17 +1,42 @@
 // Project-wide configuration constants
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <array>
 
+// -----------------------------------------------------------------------------
+// Display selection & geometry
+// -----------------------------------------------------------------------------
+#define DISPLAY_DRIVER_ADAFRUIT_SSD1306 0
+#define DISPLAY_DRIVER_U8G2_SSD1306     1
 
-// make screen configurable here, wether it is u8g2 or Adafruit_SSD1306
+// Pick which display backend to compile (see ui.cpp for usage)
+#define DISPLAY_DRIVER DISPLAY_DRIVER_U8G2_SSD1306
+constexpr int DISPLAY_WIDTH  = 128;
+constexpr int DISPLAY_HEIGHT = 64;
+constexpr int NUM_WAVEFORM_SAMPLES = DISPLAY_WIDTH;
+constexpr uint8_t DISPLAY_I2C_ADDRESS = 0x3C;
+constexpr bool DISPLAY_INVERT_COLORS = false;
 
-constexpr std::array<int, 4> BUTTON_PINS = {13, 4, 16, 17, };
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+	// Pas deze macro's aan als je een andere U8g2 constructor nodig hebt
+	#ifndef DISPLAY_U8G2_CLASS
+		#define DISPLAY_U8G2_CLASS U8G2_SSD1306_128X64_NONAME_F_HW_I2C
+	#endif
+	#ifndef DISPLAY_U8G2_CTOR_ARGS
+		#define DISPLAY_U8G2_CTOR_ARGS U8G2_R0, U8X8_PIN_NONE
+	#endif
+#endif
+
+// -----------------------------------------------------------------------------
+// User controls
+// -----------------------------------------------------------------------------
+constexpr std::array<int, 4> BUTTON_PINS = {13, 4, 16, 17};
 constexpr size_t BUTTON_COUNT = BUTTON_PINS.size();
 constexpr bool BUTTONS_ACTIVE_LOW = true;
 constexpr int SWITCH_PIN = 27;
+constexpr int EXTRA_SWITCH_PIN = 26;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
 constexpr uint32_t BUTTON_FADE_MS = 12;
@@ -22,7 +47,6 @@ constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
 constexpr float VOLUME_DEADBAND = 0.12f;
 
 // --- Additional hardware pins for new features ---
-
 constexpr int SD_CS_PIN    = 5;  // already in use by SD
 // SPI bus (shared with SD)
 // Note: SCK/MOSI/MISO are the VSPI defaults used by SD.begin()
@@ -45,7 +69,6 @@ constexpr int ENC_PIN_SW = 39;
 
 // Extra inputs: 2 extra buttons + 1 extra switch
 constexpr std::array<int, 2> EXTRA_BUTTON_PINS = {37, 38};
-constexpr int EXTRA_SWITCH_PIN = 22;
 
 // Notes:
 // - GPIO34..39 are input-only (geen OUTPUT, geen interne pull-ups). Gebruik externe pull-ups.

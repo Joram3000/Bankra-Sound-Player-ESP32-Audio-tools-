@@ -6,9 +6,9 @@
 #include <Wire.h>
 #include <Arduino.h>
 #include <algorithm>
+#include <cmath>
 
-// Waveform buffer configuratie
-#define WAVEFORM_SAMPLES 128  // Aantal samples (= display breedte)
+#include "config.h"
 
 /**
  * ScopeDisplay - Beheert OLED display met oscilloscope visualisatie
@@ -24,10 +24,10 @@ class ScopeDisplay {
     TaskHandle_t displayTaskHandle;
     SemaphoreHandle_t displayMutex;
     
-    // Waveform data (gedeeld met ScopeI2SStream)
-    int16_t* waveformBuffer;
-    int* waveformIndex;
-    int waveformSamples; // aantal samples in de cirkelbuffer (was WAVEFORM_SAMPLES)
+  // Waveform data (gedeeld met ScopeI2SStream)
+  int16_t* waveformBuffer;
+  int* waveformIndex;
+  int waveformSamples; // aantal samples in de cirkelbuffer
     
     // Zoom/state
     float horizZoom = 4.0f;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
@@ -40,10 +40,9 @@ class ScopeDisplay {
     String currentFile;
     bool isPlaying;
     
-    // Display layout configuratie
-    static const int SCREEN_WIDTH = 128;
-    static const int SCREEN_HEIGHT = 64;
-    static const int SCOPE_HEIGHT = 64;
+  // Display layout configuratie
+  static constexpr int kScreenWidth = DISPLAY_WIDTH;
+  static constexpr int kScreenHeight = DISPLAY_HEIGHT;
     
     /**
      * Display update task - draait in aparte thread
@@ -81,19 +80,19 @@ class ScopeDisplay {
      * - optional envelope (min/max) voor behoud van transiënten
      */
     void renderWaveform() {
-      const int scopeCenter = SCOPE_HEIGHT / 2;
+  const int scopeCenter = kScreenHeight / 2;
       if (waveformSamples <= 0 || !waveformBuffer) return;
 
       const bool useSmoothing = true;
       const float smoothingAlpha = 0.6f;
       const bool drawEnvelope = false;
 
-      int displayedSamples = std::max(1, static_cast<int>(waveformSamples / horizZoom));
-      displayedSamples = std::min(displayedSamples, waveformSamples);
+  int displayedSamples = std::max(1, static_cast<int>(waveformSamples / horizZoom));
+  displayedSamples = std::min(displayedSamples, waveformSamples);
 
       // Zorg dat endpoints precies overeenkomen: pixel 0 -> startIndex, pixel W-1 -> newestIndex
-      float step = (displayedSamples > 1 && SCREEN_WIDTH > 1)
-                    ? static_cast<float>(displayedSamples - 1) / static_cast<float>(SCREEN_WIDTH - 1)
+  float step = (displayedSamples > 1 && kScreenWidth > 1)
+        ? static_cast<float>(displayedSamples - 1) / static_cast<float>(kScreenWidth - 1)
                     : 0.0f;
 
       int newestIndex = ((*waveformIndex - 1) + waveformSamples) % waveformSamples;
@@ -101,13 +100,13 @@ class ScopeDisplay {
       if (startIndex < 0) startIndex += waveformSamples;
 
       // window-size voor gemiddelde per pixel (smaller window to avoid over-blur)
-      int windowSize = std::max(1, static_cast<int>(ceilf((displayedSamples / (float)SCREEN_WIDTH))));
+  int windowSize = std::max(1, static_cast<int>(ceilf((displayedSamples / (float)kScreenWidth))));
       int halfWin = (windowSize - 1) / 2;
 
       // gebruik vorige frame eindwaarde als start voor smoothing (vermijdt hoge eerste pixel)
       float prevYf = isfinite(lastDisplayY) ? lastDisplayY : NAN;
 
-      for (int x = 0; x < SCREEN_WIDTH; ++x) {
+  for (int x = 0; x < kScreenWidth; ++x) {
         float samplePos = startIndex + x * step;
         int centerIdx = static_cast<int>(floor(samplePos));
         float frac = samplePos - static_cast<float>(centerIdx);
@@ -130,13 +129,13 @@ class ScopeDisplay {
           // optionele envelope-rendering (niet gewijzigd)
         }
 
-        float yf = scopeCenter - (val * ((SCOPE_HEIGHT / 2) * vertScale) / 32768.0f);
+  float yf = scopeCenter - (val * ((kScreenHeight / 2) * vertScale) / 32768.0f);
 
         if (useSmoothing) {
           if (!isfinite(prevYf)) prevYf = yf; // initialiseer netjes met eerste mapped waarde
           float smoothY = (smoothingAlpha * yf) + ((1.0f - smoothingAlpha) * prevYf);
-          int yPrev = constrain(static_cast<int>(round(prevYf)), 0, SCOPE_HEIGHT - 1);
-          int yCur  = constrain(static_cast<int>(round(smoothY)), 0, SCOPE_HEIGHT - 1);
+          int yPrev = constrain(static_cast<int>(round(prevYf)), 0, kScreenHeight - 1);
+          int yCur  = constrain(static_cast<int>(round(smoothY)), 0, kScreenHeight - 1);
           if (x == 0) {
             display->drawPixel(x, yCur, SSD1306_WHITE);
           } else {
@@ -144,7 +143,7 @@ class ScopeDisplay {
           }
           prevYf = smoothY;
         } else {
-          int y = constrain(static_cast<int>(round(yf)), 0, SCOPE_HEIGHT - 1);
+          int y = constrain(static_cast<int>(round(yf)), 0, kScreenHeight - 1);
           if (!isfinite(prevYf)) {
             display->drawPixel(x, y, SSD1306_WHITE);
           } else {
@@ -167,7 +166,7 @@ class ScopeDisplay {
      */
     // Backward-compatible 3-arg constructor (delegates to 4-arg)
     ScopeDisplay(Adafruit_SSD1306* disp, int16_t* waveBuffer, int* waveIdx)
-      : ScopeDisplay(disp, waveBuffer, waveIdx, WAVEFORM_SAMPLES) {}
+      : ScopeDisplay(disp, waveBuffer, waveIdx, NUM_WAVEFORM_SAMPLES) {}
 
     ScopeDisplay(Adafruit_SSD1306* disp, int16_t* waveBuffer, int* waveIdx, int waveSamples) 
       : display(disp),
@@ -194,11 +193,12 @@ class ScopeDisplay {
      * @param i2cAddress I2C adres van display (default: 0x3C)
      * @return true als succesvol
      */
-    bool begin(uint8_t i2cAddress = 0x3C) {
+  bool begin(uint8_t i2cAddress = DISPLAY_I2C_ADDRESS) {
       // Initialiseer display hardware
       if(!display->begin(SSD1306_SWITCHCAPVCC, i2cAddress)) {
         return false;
       }
+      display->invertDisplay(DISPLAY_INVERT_COLORS);
       
       // Toon startup bericht
       display->clearDisplay();
