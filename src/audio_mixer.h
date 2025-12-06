@@ -44,17 +44,17 @@ public:
 
   void configureMasterLowPass(float cutoffHz, float q = 0.7071f,
                               bool enabled = true) {
-    masterFilterCutoff = cutoffHz;
-    masterFilterQ = q;
-    masterFilterEnabled = enabled;
-    refreshMasterFilterState();
+    inputFilterCutoff = cutoffHz;
+    inputFilterQ = q;
+    inputFilterEnabled = enabled;
+    refreshInputFilterState();
 #if DEBUG_MIXER
-    Serial.print("[DryWetMixer] configureMasterLowPass cutoff=");
-    Serial.print(masterFilterCutoff);
+    Serial.print("[DryWetMixer] configureInputLowPass cutoff=");
+    Serial.print(inputFilterCutoff);
     Serial.print(" q=");
-    Serial.print(masterFilterQ, 4);
+    Serial.print(inputFilterQ, 4);
     Serial.print(" enabled=");
-    Serial.println(masterFilterEnabled ? "yes" : "no");
+    Serial.println(inputFilterEnabled ? "yes" : "no");
 #endif
   }
 
@@ -78,7 +78,7 @@ public:
     const size_t reserveFrames = 256; // tweak if needed
     mixBuffer.clear();
     mixBuffer.reserve(reserveFrames * channels);
-  refreshMasterFilterState();
+    refreshInputFilterState();
 #if DEBUG_MIXER
     Serial.print("[DryWetMixer] setAudioInfo sr=");
     Serial.print(sampleRate);
@@ -205,12 +205,13 @@ private:
   uint32_t attackFrames = 1;
   uint32_t attackFramesRemaining = 0;
 
-  // Master filter state
-  std::vector<std::unique_ptr<LowPassFilter<float>>> masterLowPassFilters;
-  bool masterFilterEnabled = false;
-  bool masterFilterInitialized = false;
-  float masterFilterCutoff = 0.0f;
-  float masterFilterQ = 0.7071f;
+  // Input filter state (applied before wet send and dry output)
+  std::vector<std::unique_ptr<LowPassFilter<float>>> inputLowPassFilters;
+  bool inputFilterEnabled = false;
+  bool inputFilterInitialized = false;
+  float inputFilterCutoff = 0.0f;
+  float inputFilterQ = 0.7071f;
+  std::vector<float> filteredDryScratch;
 
   // debug counters
   uint32_t debugFrameCounter = 0;
@@ -263,18 +264,25 @@ private:
     }
 
     int16_t* mixed = mixBuffer.data();
+    if (filteredDryScratch.size() < static_cast<size_t>(channels)) {
+      filteredDryScratch.resize(static_cast<size_t>(channels), 0.0f);
+    }
 
     for (size_t frame = 0; frame < frames; ++frame) {
-      int32_t mono = 0;
+      float monoSum = 0.0f;
       for (int ch = 0; ch < channels; ++ch) {
-        mono += input[frame * channels + ch];
+        float sampleValue = static_cast<float>(input[frame * channels + ch]);
+        float filtered = processInputLowPass(sampleValue, ch);
+        if (filtered > 32767.0f) filtered = 32767.0f;
+        if (filtered < -32768.0f) filtered = -32768.0f;
+        filteredDryScratch[ch] = filtered;
+        monoSum += filtered;
       }
-      mono /= channels;
-
+      float filteredMono = (channels > 0) ? (monoSum / static_cast<float>(channels)) : monoSum;
+      effect_t wetInput = sendActive ? static_cast<effect_t>(filteredMono) : 0;
       // Always run the delay process so its internal buffer advances.
-      // If sendActive is false we feed silence (0) into the delay so the
-      // delay's feedback/echo tail continues but no new input is injected.
-      effect_t wetSample = delay->process(sendActive ? static_cast<effect_t>(mono) : 0);
+      // When send is muted we still feed silence so the delay tail keeps moving.
+      effect_t wetSample = delay->process(wetInput);
       float wetLevel = advanceWetMix();
       float attackGain = advanceAttackGain();
 
@@ -295,7 +303,7 @@ private:
 #endif
 
       for (int ch = 0; ch < channels; ++ch) {
-        int32_t dryVal = input[frame * channels + ch];
+        int32_t dryVal = static_cast<int32_t>(filteredDryScratch[ch]);
         int32_t mixedVal = static_cast<int32_t>(dryMix * dryVal + wetLevel * wetSample);
         if (attackGain < 0.999f) {
           mixedVal = static_cast<int32_t>(mixedVal * attackGain);
@@ -305,8 +313,6 @@ private:
         mixed[frame * channels + ch] = static_cast<int16_t>(mixedVal);
       }
     }
-
-    applyMasterLowPass(mixed, frames);
 
     // Write mixed samples back into chunk
     if (sampleBytes == sizeof(int16_t)) {
@@ -376,42 +382,35 @@ private:
     return gain;
   }
 
-  void refreshMasterFilterState() {
-    masterFilterInitialized = false;
-    masterLowPassFilters.clear();
-    if (!masterFilterEnabled || sampleRate == 0 || channels <= 0) {
+  void refreshInputFilterState() {
+    inputFilterInitialized = false;
+    inputLowPassFilters.clear();
+    filteredDryScratch.clear();
+    if (!inputFilterEnabled || sampleRate == 0 || channels <= 0) {
       return;
     }
-    masterLowPassFilters.resize(static_cast<size_t>(channels));
+    inputLowPassFilters.resize(static_cast<size_t>(channels));
     for (int ch = 0; ch < channels; ++ch) {
-      masterLowPassFilters[ch].reset(new LowPassFilter<float>());
-      masterLowPassFilters[ch]->begin(masterFilterCutoff,
-                                      static_cast<float>(sampleRate),
-                                      masterFilterQ);
+      inputLowPassFilters[ch].reset(new LowPassFilter<float>());
+      inputLowPassFilters[ch]->begin(inputFilterCutoff,
+                                     static_cast<float>(sampleRate),
+                                     inputFilterQ);
     }
-    masterFilterInitialized = true;
+    filteredDryScratch.resize(static_cast<size_t>(channels), 0.0f);
+    inputFilterInitialized = true;
   }
 
-  void applyMasterLowPass(int16_t* samples, size_t frames) {
-    if (!masterFilterEnabled || !masterFilterInitialized ||
-        masterLowPassFilters.size() < static_cast<size_t>(channels)) {
-      return;
+  float processInputLowPass(float sample, int channelIndex) {
+    if (!inputFilterEnabled || !inputFilterInitialized) {
+      return sample;
     }
-    size_t idx = 0;
-    for (size_t frame = 0; frame < frames; ++frame) {
-      for (int ch = 0; ch < channels; ++ch) {
-        LowPassFilter<float>* filter = masterLowPassFilters[ch].get();
-        if (filter == nullptr) {
-          ++idx;
-          continue;
-        }
-        float filtered = filter->process(static_cast<float>(samples[idx]));
-        if (filtered > 32767.0f) filtered = 32767.0f;
-        if (filtered < -32768.0f) filtered = -32768.0f;
-        samples[idx] = static_cast<int16_t>(filtered);
-        ++idx;
-      }
+    if (channelIndex < 0 ||
+        channelIndex >= static_cast<int>(inputLowPassFilters.size())) {
+      return sample;
     }
+    LowPassFilter<float>* filter = inputLowPassFilters[channelIndex].get();
+    if (filter == nullptr) return sample;
+    return filter->process(sample);
   }
 };
 
