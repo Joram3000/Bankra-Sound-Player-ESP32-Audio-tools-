@@ -36,6 +36,7 @@ constexpr std::array<int, 4> BUTTON_PINS = {13, 4, 16, 17};
 constexpr size_t BUTTON_COUNT = BUTTON_PINS.size();
 constexpr bool BUTTONS_ACTIVE_LOW = true;
 constexpr int SWITCH_PIN = 27;
+constexpr int EXTRA_SWITCH_PIN = 26;
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
 constexpr uint32_t BUTTON_FADE_MS = 12;
@@ -68,7 +69,6 @@ constexpr int ENC_PIN_SW = 39;
 
 // Extra inputs: 2 extra buttons + 1 extra switch
 constexpr std::array<int, 2> EXTRA_BUTTON_PINS = {37, 38};
-constexpr int EXTRA_SWITCH_PIN = 22;
 
 // Notes:
 // - GPIO34..39 are input-only (geen OUTPUT, geen interne pull-ups). Gebruik externe pull-ups.
