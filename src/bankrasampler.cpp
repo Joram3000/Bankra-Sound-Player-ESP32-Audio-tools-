@@ -57,7 +57,7 @@ Button buttons[BUTTON_COUNT] = {
   Button(BUTTON_PINS[3], "/4.wav", BUTTONS_ACTIVE_LOW),
 };
 
-VolumeManager volume(VOLUME_POT_PIN);
+VolumeManager volume(POT_PIN);
 
 
 // Audio/display init helpers
