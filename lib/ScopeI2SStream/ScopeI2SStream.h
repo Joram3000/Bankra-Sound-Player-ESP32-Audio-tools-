@@ -2,6 +2,7 @@
 #define SCOPEI2SSTREAM_H
 
 #include <AudioTools.h>
+#include <algorithm>
 
 #include "config.h"
 
@@ -15,7 +16,9 @@ class ScopeI2SStream : public I2SStream {
     int* waveformIndex;
     SemaphoreHandle_t* mutex;
     int downsampleRate;
-     float amplitudeGamma = 0.5f; // Schaalfactor voor amplitude (wortel)
+    float amplitudeGamma = 0.5f; // Schaalfactor voor amplitude (wortel)
+    int sampleBytes = sizeof(int16_t);
+    int channelCount = 2;
     
   public:
     /**
@@ -31,36 +34,64 @@ class ScopeI2SStream : public I2SStream {
         mutex(displayMutex),
         downsampleRate(downsample) {
     }
+
+    void setAudioInfo(AudioInfo info) override {
+  sampleBytes = std::max<int>(1, info.bits_per_sample / 8);
+  channelCount = std::max<int>(1, info.channels);
+      I2SStream::setAudioInfo(info);
+    }
     
     /**
      * Override write() om samples te capturen voor scope display
      */
     size_t write(const uint8_t *data, size_t len) override {
-      // Capture samples voor waveform (downsample voor display)
+      captureForScope(data, len);
+      // Schrijf data door naar I2S hardware
+      return I2SStream::write(data, len);
+    }
+
+  private:
+    void captureForScope(const uint8_t *data, size_t len) {
       static int sampleCounter = 0;
-      const int16_t* samples = (const int16_t*)data;
-      int numSamples = len / sizeof(int16_t);
-      
-      for(int i = 0; i < numSamples; i += 2) {  // Skip rechter kanaal (stereo)
-        if(sampleCounter++ % downsampleRate == 0) {  // Downsample
-          if(xSemaphoreTake(*mutex, 0)) {  // Non-blocking mutex
-            // Normaliseer sample naar [-1, 1]
-            int16_t s = samples[i];
-            float norm = (float)s / 32768.0f;
-            // Pas niet-lineaire schaal toe
+      if (waveformBuffer == nullptr || waveformIndex == nullptr || mutex == nullptr) return;
+      if (sampleBytes <= 0 || channelCount <= 0) return;
+
+      size_t frameSize = sampleBytes * channelCount;
+      if (frameSize == 0) return;
+      size_t frames = len / frameSize;
+      const uint8_t* framePtr = data;
+
+      for (size_t frame = 0; frame < frames; ++frame) {
+        if (sampleCounter++ % downsampleRate == 0) {
+          float norm = extractLeftChannelNormalized(framePtr);
+          if (xSemaphoreTake(*mutex, 0)) {
             float scaled = powf(fabsf(norm), amplitudeGamma);
-            if(norm < 0) scaled = -scaled;
-            // Schaal terug naar int16_t bereik
+            if (norm < 0) scaled = -scaled;
             int16_t out = (int16_t)(scaled * 32767.0f);
             waveformBuffer[*waveformIndex] = out;
             *waveformIndex = (*waveformIndex + 1) % NUM_WAVEFORM_SAMPLES;
             xSemaphoreGive(*mutex);
           }
         }
+        framePtr += frameSize;
       }
-      
-      // Schrijf data door naar I2S hardware
-      return I2SStream::write(data, len);
+    }
+
+    float extractLeftChannelNormalized(const uint8_t* framePtr) const {
+      if (sampleBytes == sizeof(int16_t)) {
+        const int16_t* sample16 = reinterpret_cast<const int16_t*>(framePtr);
+        return static_cast<float>(*sample16) / 32768.0f;
+      }
+      if (sampleBytes == sizeof(int32_t)) {
+        const int32_t* sample32 = reinterpret_cast<const int32_t*>(framePtr);
+        return static_cast<float>(*sample32) / 2147483648.0f;
+      }
+      // fallback: treat as unsigned byte stream centered at 0
+      int32_t accum = 0;
+      for (int i = 0; i < sampleBytes; ++i) {
+        accum |= static_cast<int32_t>(framePtr[i]) << (8 * i);
+      }
+      return static_cast<float>(accum) / 2147483648.0f;
     }
 };
 
