@@ -33,6 +33,11 @@ bool switchRawState = false;
 bool switchDebouncedState = false;
 uint32_t switchLastDebounceTime = 0;
 
+// Filter switch (pin 26) state
+bool filterSwitchRawState = false;
+bool filterSwitchDebouncedState = false;
+uint32_t filterSwitchLastDebounceTime = 0;
+
 // Helpers
 // (Inlined path handling where needed; `makeAbsolutePath` removed because
 // the project always uses the same base path.)
@@ -84,8 +89,6 @@ void initAudio() {
   mixInfo.channels = cfg.channels > 0 ? cfg.channels : 2;
   mixInfo.bits_per_sample = cfg.bits_per_sample > 0 ? cfg.bits_per_sample : 16;
   mixerStream.setAudioInfo(mixInfo);
-  mixerStream.configureMasterLowPass(MASTER_LOW_PASS_CUTOFF_HZ, MASTER_LOW_PASS_Q,
-                                     MASTER_LOW_PASS_ENABLED);
   mixerStream.updateEffectSampleRate(effectiveSampleRate);
   mixerStream.setMix(1.0f, 0.75f);
   delayEffect.setDuration(420);      // milliseconds
@@ -99,6 +102,11 @@ void initAudio() {
   player.setFadeTime(BUTTON_FADE_MS);
   player.begin();
   player.stop();
+}
+
+void applyFilterSwitchState(bool enabled) {
+  mixerStream.configureMasterLowPass(MASTER_LOW_PASS_CUTOFF_HZ,
+                                     MASTER_LOW_PASS_Q, enabled);
 }
 
 // play helper
@@ -135,6 +143,10 @@ void setup() {
   bool init = (digitalRead(SWITCH_PIN_DELAY_SEND) == LOW);
   switchRawState = switchDebouncedState = init;
 
+  pinMode(SWITCH_PIN_ENABLE_FILTER, INPUT_PULLUP);
+  bool filterInit = (digitalRead(SWITCH_PIN_ENABLE_FILTER) == LOW);
+  filterSwitchRawState = filterSwitchDebouncedState = filterInit;
+
   initSd();
   initDisplay();
   initAudio();
@@ -143,6 +155,7 @@ void setup() {
   // into the delay via the hardware switch (setSendActive).
   mixerStream.setEffectActive(true);
   mixerStream.setSendActive(switchDebouncedState);
+  applyFilterSwitchState(filterSwitchDebouncedState);
 }
 
 void loop() {
@@ -159,6 +172,17 @@ void loop() {
     switchDebouncedState = raw;
     // Switch now controls whether we send audio into the delay line.
     mixerStream.setSendActive(switchDebouncedState);
+  }
+
+  bool filterRaw = (digitalRead(SWITCH_PIN_ENABLE_FILTER) == LOW);
+  if (filterRaw != filterSwitchRawState) {
+    filterSwitchLastDebounceTime = now;
+    filterSwitchRawState = filterRaw;
+  }
+  if ((now - filterSwitchLastDebounceTime) > BUTTON_DEBOUNCE_MS &&
+      filterRaw != filterSwitchDebouncedState) {
+    filterSwitchDebouncedState = filterRaw;
+    applyFilterSwitchState(filterSwitchDebouncedState);
   }
 
   // buttons
