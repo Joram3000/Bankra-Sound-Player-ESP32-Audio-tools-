@@ -179,6 +179,12 @@ void loop() {
 
   // Audio copy + housekeeping
   player.copy();
+  // When player is inactive, pump a small amount of silence through the
+  // mixer so delay/feedback buffers continue to advance and tails decay.
+  if (!player.isActive()) {
+    // push 64 frames (tweak if needed)
+    mixerStream.pumpSilenceFrames(64);
+  }
   // Als een sample klaar is: verbreek alleen de associatie met activeButtonIndex
   // maar release de latched state niet automatisch. Daardoor blijft een ingedrukte
   // knop latched en veroorzaakt geen her-trigger totdat je loslaat en opnieuw

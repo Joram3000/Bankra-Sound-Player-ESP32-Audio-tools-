@@ -12,17 +12,15 @@
 #define DEBUG_MIXER 0
 #endif
 
-class DryWetMixerStream : public AudioStream {
+class DryWetMixerStream : public ModifyingStream {
 public:
+  // Backwards-compatible begin() delegates to ModifyingStream-style setters
   void begin(I2SStream& outStream, Delay& effect) {
-    dryOutput = &outStream;
-    delay = &effect;
+    setOutput(outStream);
+    setEffect(&effect);
 #if DEBUG_MIXER
     Serial.println("[DryWetMixer] begin()");
 #endif
-    // keep delay active so internal buffer always advances (prevents abrupt
-    // stopping of delay tails when toggling routing)
-    if (delay) delay->setActive(true);
   }
 
   void setMix(float dry, float wet) {
@@ -44,6 +42,8 @@ public:
   void setAudioInfo(AudioInfo newInfo) override {
     AudioStream::setAudioInfo(newInfo);
     if (dryOutput) dryOutput->setAudioInfo(newInfo);
+    // propagate to internal callback stream as well
+    cbStream.setAudioInfo(newInfo);
     sampleBytes = std::max<int>(1, newInfo.bits_per_sample / 8);
     channels = std::max<int>(1, newInfo.channels);
     frameBytes = sampleBytes * channels;
@@ -67,6 +67,41 @@ public:
     Serial.print(" ch=");
     Serial.println(channels);
 #endif
+  }
+
+  // ModifyingStream API: allow this mixer to be used like other AudioTools
+  // components. We keep internal pointers to the provided stream/print
+  // objects but still prefer typed I2SStream for the dry output.
+  void setStream(Stream &in) override {
+  p_in = &in;
+#if DEBUG_MIXER
+  Serial.println("[DryWetMixer] setStream()");
+#endif
+  cbStream.setStream(in);
+  s_instance = this;
+  cbStream.setUpdateCallback(staticUpdate);
+  }
+
+  void setOutput(Print &out) override {
+    // Try to treat out as an I2SStream if possible. This cast is safe when
+    // callers pass the same I2SStream instance used previously.
+    dryOutput = reinterpret_cast<I2SStream*>(&out);
+#if DEBUG_MIXER
+  Serial.println("[DryWetMixer] setOutput()");
+#endif
+  p_out = &out;
+  cbStream.setOutput(out);
+  s_instance = this;
+  cbStream.setUpdateCallback(staticUpdate);
+  }
+
+  // Configure the Delay target to use. The Delay object is not disabled by
+  // this mixer – we ensure it stays active so internal buffers keep running.
+  void setEffect(Delay* d) {
+    delay = d;
+    if (delay) delay->setActive(true);
+    s_instance = this;
+    cbStream.setUpdateCallback(staticUpdate);
   }
 
   void setEffectActive(bool active) {
@@ -108,49 +143,24 @@ public:
     Serial.println(send ? "SEND" : "NOSEND");
 #endif
   }
-
+  // Delegate write to internal CallbackStream which will call our
+  // update callback to mix the buffer before sending it to the real output.
   size_t write(const uint8_t* data, size_t len) override {
-    if (!dryOutput || !delay || len == 0) return 0;
-    if (sampleBytes != sizeof(int16_t) && sampleBytes != sizeof(int32_t)) {
-      // Unsupported format; just pass through dry
-#if DEBUG_MIXER
-      Serial.println("[DryWetMixer] Unsupported sample size, passing through dry");
-#endif
-      return dryOutput->write(data, len);
-    }
+    return cbStream.write(data, len);
+  }
 
-    size_t processed = 0;
-    while (len > 0) {
-      if (pendingLen > 0 || len < frameBytes) {
-        size_t needed = frameBytes - pendingLen;
-        size_t copyLen = std::min(needed, len);
-        if (pendingBuffer.size() < frameBytes) pendingBuffer.resize(frameBytes);
-        memcpy(pendingBuffer.data() + pendingLen, data, copyLen);
-        pendingLen += copyLen;
-        data += copyLen;
-        len -= copyLen;
-        if (pendingLen < frameBytes) break;
-        mixAndWrite(pendingBuffer.data(), frameBytes);
-        pendingLen = 0;
-        processed += frameBytes;
-        continue;
-      }
-
-      size_t chunkLen = (len / frameBytes) * frameBytes;
-      if (chunkLen == 0) break;
-      mixAndWrite(data, chunkLen);
-      data += chunkLen;
-      len -= chunkLen;
-      processed += chunkLen;
-    }
-
-#if DEBUG_MIXER
-    // report how many bytes were processed this call
-    Serial.print("[DryWetMixer] write processed_bytes=");
-    Serial.println(processed);
-#endif
-
-    return processed;
+  // When there is no active source we can pump silence through the mixer to
+  // advance internal effects (e.g., delay buffer) so tails continue to decay.
+  // frames: number of audio frames (samples per channel) to push.
+  void pumpSilenceFrames(size_t frames) {
+    if (frames == 0) return;
+    size_t sampleCount = frames * std::max<int>(1, channels);
+    size_t byteCount = sampleCount * static_cast<size_t>(sampleBytes);
+    // allocate a temporary zero buffer on the heap to avoid stack pressure
+    std::vector<uint8_t> zeros(byteCount);
+    // write will call the CallbackStream which will call our updateCallback
+    // and thus call delay->process(0) for each frame.
+    write(zeros.data(), byteCount);
   }
 
 private:
@@ -182,10 +192,33 @@ private:
   // debug counters
   uint32_t debugFrameCounter = 0;
   const uint32_t debugFrameInterval = 100; // print every N frames
+  // ModifyingStream targets
+  Stream* p_in = nullptr;
+  Print* p_out = nullptr;
+  // internal CallbackStream used to hook into AudioTools processing
+  CallbackStream cbStream;
+
+  // static instance pointer for callback forwarding (assumes single mixer)
+  static inline DryWetMixerStream* s_instance = nullptr;
+
+  // static callback invoked by CallbackStream; forwards to instance method
+  static size_t staticUpdate(uint8_t* data, size_t len) {
+    if (s_instance) return s_instance->updateCallback(data, len);
+    return len;
+  }
 
   void mixAndWrite(const uint8_t* chunk, size_t chunkLen) {
+    // Provide an update-style API which rewrites the incoming buffer in-place
+    // with mixed output. This method is also used as the core implementation
+    // for the CallbackStream update callback.
+  }
+
+  // Called by staticUpdate to perform the mixing and write results back into
+  // the provided byte buffer. Returns number of bytes written (len) or 0 on
+  // error.
+  size_t updateCallback(uint8_t* chunk, size_t chunkLen) {
     size_t frames = chunkLen / frameBytes;
-    if (frames == 0) return;
+    if (!dryOutput || !delay || frames == 0) return 0;
     size_t sampleCount = frames * channels;
     mixBuffer.resize(sampleCount);
 
@@ -203,7 +236,7 @@ private:
       }
       input = convertedInput.data();
     } else {
-      return;
+      return 0;
     }
 
     int16_t* mixed = mixBuffer.data();
@@ -215,10 +248,10 @@ private:
       }
       mono /= channels;
 
-  // Always run the delay process so its internal buffer advances.
-  // If sendActive is false we feed silence (0) into the delay so the
-  // delay's feedback/echo tail continues but no new input is injected.
-  effect_t wetSample = delay->process(sendActive ? static_cast<effect_t>(mono) : 0);
+      // Always run the delay process so its internal buffer advances.
+      // If sendActive is false we feed silence (0) into the delay so the
+      // delay's feedback/echo tail continues but no new input is injected.
+      effect_t wetSample = delay->process(sendActive ? static_cast<effect_t>(mono) : 0);
       float wetLevel = advanceWetMix();
       float attackGain = advanceAttackGain();
 
@@ -249,7 +282,23 @@ private:
         mixed[frame * channels + ch] = static_cast<int16_t>(mixedVal);
       }
     }
-    writeMixedFrames(mixed, frames);
+
+    // Write mixed samples back into chunk
+    if (sampleBytes == sizeof(int16_t)) {
+      memcpy(chunk, mixed, sampleCount * sizeof(int16_t));
+      return sampleCount * sizeof(int16_t);
+    }
+
+    if (sampleBytes == sizeof(int32_t)) {
+      expandedOutput.resize(sampleCount);
+      for (size_t i = 0; i < sampleCount; ++i) {
+        expandedOutput[i] = static_cast<int32_t>(mixed[i]) << 16;
+      }
+      memcpy(chunk, expandedOutput.data(), sampleCount * sizeof(int32_t));
+      return sampleCount * sizeof(int32_t);
+    }
+
+    return 0;
   }
 
   void writeMixedFrames(const int16_t* mixed, size_t frames) {
@@ -302,3 +351,5 @@ private:
     return gain;
   }
 };
+
+// static instance pointer defined inline in-class
