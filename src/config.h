@@ -66,6 +66,13 @@ constexpr uint16_t MASTER_COMPRESSOR_HOLD_MS          = 16;
 constexpr uint8_t  MASTER_COMPRESSOR_THRESHOLD_PERCENT= 18;  // relative to full-scale
 constexpr float    MASTER_COMPRESSOR_RATIO            = 0.45f; // 0..1 (lower = stronger)
 
+// zoom screen defaults
+// float horizZoom = 4.0f;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
+// float vertScale = 2.0f;   // amplitude schaal factor
+constexpr float DEFAULT_HORIZ_ZOOM = 4.0f;
+constexpr float DEFAULT_VERT_SCALE = 2.0f;
+
+
 // --- Additional hardware pins for new features ---
 constexpr int SD_CS_PIN    = 5;  // already in use by SD
 constexpr int SPI_SCK_PIN  = 18; // SCLK (shared)

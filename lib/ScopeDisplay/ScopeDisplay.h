@@ -30,8 +30,8 @@ class ScopeDisplay {
   int waveformSamples; // aantal samples in de cirkelbuffer
     
     // Zoom/state
-    float horizZoom = 4.0f;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
-    float vertScale = 2.0f;   // amplitude schaal factor
+    float horizZoom = DEFAULT_HORIZ_ZOOM;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
+    float vertScale = DEFAULT_VERT_SCALE;   // amplitude schaal factor
 
     // bewaar laatst getekende Y tussen frames om jumps te voorkomen
     float lastDisplayY = NAN;
