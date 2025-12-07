@@ -40,11 +40,9 @@ bool filterSwitchRawState = false;
 bool filterSwitchDebouncedState = false;
 uint32_t filterSwitchLastDebounceTime = 0;
 
-float normalizeVolumeFromAdc(int raw) {
-  const float adcMax = 4095.0f;
-  float v = 1.0f - ((float)raw / adcMax);
-  return constrain(v, 0.0f, 1.0f);
-}
+// normalizeVolumeFromAdc moved into input.cpp (anonymous namespace). Remove
+// duplicate implementation here to avoid an unused symbol and potential ODR
+// confusion across translation units.
 
 // Button and VolumeManager moved to input.h / input.cpp
 
@@ -62,8 +60,11 @@ VolumeManager volume(POT_PIN);
 
 // Audio/display init helpers
 void initSd() {
-  SPI.begin();
-  if (!SD.begin(5, SPI, 80000000UL)) {
+  // Use configured pin constants from config.h so the constants are actually
+  // referenced and consistent with SD usage. Also initialize SPI with the
+  // chosen pins for clarity on ESP32.
+  SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SD_CS_PIN);
+  if (!SD.begin(SD_CS_PIN, SPI, 80000000UL)) {
     Serial.println("Card failed, or not present");
     while (1);
   }
