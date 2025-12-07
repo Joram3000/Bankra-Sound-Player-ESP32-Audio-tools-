@@ -70,7 +70,6 @@ void initSd() {
 }
 
 void initDisplay() {
-  // migrated to ui module
   if (!initUi()) {
     for (;;) ;
   }

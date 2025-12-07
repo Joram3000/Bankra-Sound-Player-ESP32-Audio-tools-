@@ -15,7 +15,7 @@
 #define DISPLAY_DRIVER DISPLAY_DRIVER_U8G2_SSD1306
 constexpr int DISPLAY_WIDTH  = 128;
 constexpr int DISPLAY_HEIGHT = 64;
-constexpr int NUM_WAVEFORM_SAMPLES = DISPLAY_WIDTH / 2;
+constexpr int NUM_WAVEFORM_SAMPLES = DISPLAY_WIDTH * 4;
 constexpr uint8_t DISPLAY_I2C_ADDRESS = 0x3C;
 constexpr bool DISPLAY_INVERT_COLORS = false;
 
@@ -47,11 +47,11 @@ constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
 constexpr float VOLUME_DEADBAND = 0.12f;
 
 // Master output filtering
-constexpr bool  MASTER_LOW_PASS_ENABLED   = true;
+// constexpr bool  MASTER_LOW_PASS_ENABLED   = true;
 constexpr float MASTER_LOW_PASS_CUTOFF_HZ = 500.0f;
-constexpr float MASTER_LOW_PASS_Q         = 0.4071f;
-constexpr float MASTER_LOW_PASS_MIN_HZ    = 20.0f;
-constexpr float MASTER_LOW_PASS_MAX_HZ    = 6000.0f;
+constexpr float MASTER_LOW_PASS_Q         = 0.8071f;
+constexpr float MASTER_LOW_PASS_MIN_HZ    = 300.0f;
+constexpr float MASTER_LOW_PASS_MAX_HZ    = 4500.0f;
 constexpr float MASTER_LOW_PASS_CUTOFF_SMOOTH_ALPHA = 0.48f; // 0..1
 constexpr float MASTER_LOW_PASS_CUTOFF_DEADBAND_HZ  = 4.0f;
 
