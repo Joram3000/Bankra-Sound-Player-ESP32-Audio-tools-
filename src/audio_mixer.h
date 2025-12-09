@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <cmath>
 #include "AudioTools/CoreAudio/AudioEffects/AudioEffects.h"
 #include "AudioTools/CoreAudio/AudioFilter/Filter.h"
 #include <Arduino.h> // voor Serial debug
@@ -30,6 +31,7 @@ public:
   void configureMasterLowPass(float cutoffHz, float q = 0.7071f,
                               bool enabled = true) {
     inputFilterCutoff = cutoffHz;
+    inputFilterTargetCutoff = cutoffHz;
     inputFilterQ = q;
     inputFilterEnabled = enabled;
     refreshInputFilterState();
@@ -58,18 +60,9 @@ public:
   }
 
   void setInputLowPassCutoff(float cutoffHz) {
-    inputFilterCutoff = cutoffHz;
+    inputFilterTargetCutoff = std::max(0.0f, cutoffHz);
     if (!inputFilterEnabled || !inputFilterInitialized) {
-      return;
-    }
-    if (inputLowPassFilters.empty() || sampleRate == 0) {
-      return;
-    }
-    for (auto &filter : inputLowPassFilters) {
-      if (filter) {
-        filter->begin(inputFilterCutoff, static_cast<float>(sampleRate),
-                      inputFilterQ);
-      }
+      inputFilterCutoff = inputFilterTargetCutoff;
     }
   }
 
@@ -93,8 +86,9 @@ public:
     const size_t reserveFrames = 256; // tweak if needed
     mixBuffer.clear();
     mixBuffer.reserve(reserveFrames * channels);
+    inputFilterTargetCutoff = inputFilterCutoff;
     refreshInputFilterState();
-  refreshMasterCompressor();
+    refreshMasterCompressor();
 
   }
 
@@ -203,7 +197,9 @@ private:
   bool inputFilterEnabled = false;
   bool inputFilterInitialized = false;
   float inputFilterCutoff = 0.0f;
+  float inputFilterTargetCutoff = 0.0f;
   float inputFilterQ = 0.7071f;
+  const float inputFilterSlewRateHzPerSec = 8000.0f;
   std::vector<float> filteredDryScratch;
   std::unique_ptr<Compressor> masterCompressor;
   bool masterCompressorEnabled = false;
@@ -245,6 +241,8 @@ private:
     if (!dryOutput || !delay || frames == 0) return 0;
     size_t sampleCount = frames * channels;
     mixBuffer.resize(sampleCount);
+
+  advanceInputFilterCutoff(frames);
 
     const int16_t* input = nullptr;
     if (sampleBytes == sizeof(int16_t)) {
@@ -381,8 +379,10 @@ private:
       return;
     }
 
+    filteredDryScratch.assign(static_cast<size_t>(channels), 0.0f);
+
     if (!inputFilterEnabled || sampleRate == 0) {
-      filteredDryScratch.assign(static_cast<size_t>(channels), 0.0f);
+      inputFilterCutoff = inputFilterTargetCutoff;
       return;
     }
 
@@ -394,12 +394,14 @@ private:
       if (!inputLowPassFilters[ch]) {
         inputLowPassFilters[ch].reset(new LowPassFilter<float>());
       }
-      inputLowPassFilters[ch]->begin(inputFilterCutoff,
-                                     static_cast<float>(sampleRate),
-                                     inputFilterQ);
     }
-    filteredDryScratch.assign(static_cast<size_t>(channels), 0.0f);
+
+    if (inputFilterTargetCutoff <= 0.0f) {
+      inputFilterTargetCutoff = std::max(0.0f, inputFilterCutoff);
+    }
+    inputFilterCutoff = inputFilterTargetCutoff;
     inputFilterInitialized = true;
+    applyInputFilterCutoff(inputFilterCutoff);
   }
 
   float processInputLowPass(float sample, int channelIndex) {
@@ -413,6 +415,65 @@ private:
     LowPassFilter<float>* filter = inputLowPassFilters[channelIndex].get();
     if (filter == nullptr) return sample;
     return filter->process(sample);
+  }
+
+  void applyInputFilterCutoff(float cutoffHz) {
+    if (!inputFilterEnabled || sampleRate == 0) {
+      return;
+    }
+    if (inputLowPassFilters.empty()) {
+      return;
+    }
+    float clampedCutoff = cutoffHz;
+    if (clampedCutoff < 0.0f) {
+      clampedCutoff = 0.0f;
+    }
+    for (size_t i = 0; i < inputLowPassFilters.size(); ++i) {
+      LowPassFilter<float>* filter = inputLowPassFilters[i].get();
+      if (filter) {
+        filter->begin(clampedCutoff, static_cast<float>(sampleRate), inputFilterQ);
+      }
+    }
+  }
+
+  void advanceInputFilterCutoff(size_t frames) {
+    if (!inputFilterEnabled || !inputFilterInitialized) {
+      return;
+    }
+    if (sampleRate == 0) {
+      return;
+    }
+    float delta = inputFilterTargetCutoff - inputFilterCutoff;
+    const float epsilon = 0.05f;
+    if (fabs(delta) <= epsilon) {
+      if (inputFilterCutoff != inputFilterTargetCutoff) {
+        inputFilterCutoff = inputFilterTargetCutoff;
+        applyInputFilterCutoff(inputFilterCutoff);
+      }
+      return;
+    }
+
+    float seconds;
+    if (frames > 0) {
+      seconds = static_cast<float>(frames) / static_cast<float>(sampleRate);
+    } else {
+      seconds = 1.0f / static_cast<float>(sampleRate);
+    }
+    float maxStep = inputFilterSlewRateHzPerSec * seconds;
+    if (maxStep <= 0.0f) {
+      maxStep = inputFilterSlewRateHzPerSec / static_cast<float>(sampleRate);
+    }
+    if (delta > maxStep) {
+      delta = maxStep;
+    } else if (delta < -maxStep) {
+      delta = -maxStep;
+    }
+
+    inputFilterCutoff += delta;
+    if (inputFilterCutoff < 0.0f) {
+      inputFilterCutoff = 0.0f;
+    }
+    applyInputFilterCutoff(inputFilterCutoff);
   }
 
   void refreshMasterCompressor() {
