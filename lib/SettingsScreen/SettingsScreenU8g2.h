@@ -1,8 +1,3 @@
-// Settings screen implementation for u8g2
-// Start with a single editable item: Zoom
-// - Use the buttons to navigate and edit the zoom value.
-// - API is minimal: call `draw()` regularly and `onButton(...)` when a button is pressed.
-
 #pragma once
 
 #include <AudioTools.h>
@@ -13,16 +8,11 @@
 
 #include "config.h"
 
-// Simple settings screen for a U8G2 display that initially exposes only a
-// single setting: Zoom. The class is lightweight and header-only so it can be
-// included directly in your project. Integration notes are at the bottom.
+
 
 class SettingsScreenU8g2 {
 public:
-	// Generic button identifiers. Map your physical buttons to these values
-	// before calling onButton(). You can also forward your project's button
-	// enum values if they already match.
-	enum Button : uint8_t { BTN_UP = 1, BTN_DOWN = 4, BTN_LEFT = 5, BTN_RIGHT = 0, BTN_OK = 3, BTN_BACK = 2 };
+		enum Button : uint8_t { BTN_UP = 0, BTN_DOWN = 1, BTN_LEFT = 2, BTN_RIGHT = 3, BTN_OK = 4, BTN_BACK = 5 };
 
 	// Menu item identifiers
 	enum Item : uint8_t { ITEM_ZOOM = 0, ITEM_DELAY_TIME = 1, ITEM_DELAY_DEPTH = 2, ITEM_DELAY_FEEDBACK = 3, ITEM_FILTER_CUTOFF = 4, ITEM_COUNT = 5 };
@@ -32,7 +22,7 @@ public:
 
 	// Set callbacks that get called whenever a setting value changes.
 	void setZoomCallback(std::function<void(float)> cb) { zoomCallback = cb; }
-	void setFilterCutoffCallback(std::function<void(float)> cb) { filterCutoffCallback = cb; }
+	void setFilterCutoffCallback(std::function<void(float)> cb) { filterCutoffCallback = cb; } // we have to change this to the Q factor 
 	void setDelayTimeCallback(std::function<void(float)> cb) { delayTimeCallback = cb; }
 	void setDelayDepthCallback(std::function<void(float)> cb) { delayDepthCallback = cb; }
 	void setDelayFeedbackCallback(std::function<void(float)> cb) { delayFeedbackCallback = cb; }
@@ -55,9 +45,7 @@ public:
 		lastDrawMs = now;
 
 		u8g2.clearBuffer();
-		drawHeader();
 		drawZoom();
-		drawFooter();
 		u8g2.sendBuffer();
 		dirty = false;
 	}
@@ -154,7 +142,7 @@ private:
 
 	// zoom configuration
 	static constexpr float zoomMin = 0.5f;
-	static constexpr float zoomMax = 4.0f;
+	static constexpr float zoomMax = 40.0f;
 	static constexpr float zoomStep = 0.1f;
 	static constexpr float zoomBigStep = 0.5f;
 	// delay config steps
@@ -237,19 +225,6 @@ private:
 		}
 	}
 
-	void drawHeader() {
-		// Draw a bold banner to make clear we're in settings
-		int w = u8g2.getDisplayWidth();
-		int h = 12;
-		u8g2.setDrawColor(1);
-		u8g2.drawBox(0, 0, w, h+4);
-		u8g2.setDrawColor(0);
-		u8g2.setFont(u8g2_font_ncenB08_tr);
-		u8g2.drawStr(4, 10, "SETTINGS");
-		u8g2.setDrawColor(1);
-		// small separator below banner
-		u8g2.drawHLine(0, h+4, w);
-	}
 
 	void drawZoom() {
 		// Draw the full menu (label + all items) — this function is now the
@@ -267,7 +242,13 @@ private:
 				u8g2.setDrawColor(1);
 			}
 			u8g2.setFont(u8g2_font_6x12_tr);
-			u8g2.drawStr(4, y, labels[i]);
+			char labelBuf[24];
+			if (editing && i == selection) {
+				snprintf(labelBuf, sizeof(labelBuf), "* %s", labels[i]);
+			} else {
+				snprintf(labelBuf, sizeof(labelBuf), "  %s", labels[i]);
+			}
+			u8g2.drawStr(4, y, labelBuf);
 			// draw value aligned right
 			char valbuf[24];
 			switch (i) {
@@ -283,49 +264,8 @@ private:
 			u8g2.setDrawColor(1);
 		}
 
-		// small hint line
-		u8g2.setFont(u8g2_font_5x8_tr);
-		if (editing) u8g2.drawStr(4, u8g2.getDisplayHeight() - 10, "Editing: UP/DOWN fine, L/R coarse, OK save");
-		else u8g2.drawStr(4, u8g2.getDisplayHeight() - 10, "OK to edit, UP/DOWN nav");
+
 	}
 
-	void drawFooter() {
-		// small footer with current mode
-		u8g2.setFont(u8g2_font_5x8_tr);
-		if (editing) {
-			u8g2.drawStr(2, u8g2.getDisplayHeight() - 2, "EDIT MODE");
-		} else {
-			u8g2.drawStr(2, u8g2.getDisplayHeight() - 2, "NAV hold pads exit");
-		}
-	}
+
 };
-
-/*
-Usage example (in your main loop / button ISR):
-
-// global or file scope
-// U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0);
-// SettingsScreenU8g2 settings(u8g2);
-
-// in setup():
-// u8g2.begin();
-// settings.begin();
-
-// when entering settings screen:
-// settings.enter();
-
-// in loop():
-// settings.update();
-
-// when a button is pressed:
-// settings.onButton(SettingsScreenU8g2::BTN_UP);
-
-Notes:
- - Button mapping is intentionally generic. Map your project's physical
-   button events (or interrupt handlers) to the enum values and forward them.
- - Zoom range and step sizes can be adjusted by editing zoomMin/zoomMax
-   and zoomStep/zoomBigStep constants.
- - This header is intentionally standalone and should be safe to include from
-   any .cpp that also has access to the U8g2 instance.
-*/
-
