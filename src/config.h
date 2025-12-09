@@ -40,42 +40,40 @@ constexpr size_t BUTTON_COUNT = BUTTON_PINS.size();
 constexpr bool BUTTONS_ACTIVE_LOW = true;
 constexpr int SWITCH_PIN_DELAY_SEND = 27;
 constexpr int SWITCH_PIN_ENABLE_FILTER = 26;
+constexpr int SWITCH_PIN_SETTINGS_MODE = 35; // new pin for entering settings mode on boot
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
-constexpr uint32_t BUTTON_FADE_MS = 12;
+ constexpr uint32_t BUTTON_FADE_MS = 12;
 constexpr uint32_t EFFECT_TOGGLE_FADE_MS = 6;
 constexpr uint32_t SAMPLE_ATTACK_FADE_MS = 10;
 constexpr int POT_PIN = 34;
 constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
 constexpr float VOLUME_DEADBAND = 0.12f;
 
-// Master output filtering
-// constexpr bool  MASTER_LOW_PASS_ENABLED   = true;
-constexpr float MASTER_LOW_PASS_CUTOFF_HZ = 500.0f;
-constexpr float MASTER_LOW_PASS_Q         = 0.8071f;
-constexpr float MASTER_LOW_PASS_MIN_HZ    = 300.0f;
-constexpr float MASTER_LOW_PASS_MAX_HZ    = 4500.0f;
-constexpr float MASTER_LOW_PASS_CUTOFF_SMOOTH_ALPHA = 0.48f; // 0..1
-constexpr float MASTER_LOW_PASS_CUTOFF_DEADBAND_HZ  = 4.0f;
+// FILTER SETTINGS
+constexpr float LOW_PASS_CUTOFF_HZ = 500.0f;
+constexpr float LOW_PASS_Q         = 0.8071f;
+constexpr float LOW_PASS_MIN_HZ    = 300.0f;
+constexpr float LOW_PASS_MAX_HZ    = 4500.0f;
+constexpr float LOW_PASS_CUTOFF_SMOOTH_ALPHA = 0.48f; // 0..1
+constexpr float LOW_PASS_CUTOFF_DEADBAND_HZ  = 4.0f;
 
 // Master bus compression (gentle glue on final output)
 constexpr bool     MASTER_COMPRESSOR_ENABLED          = true;
 constexpr uint16_t MASTER_COMPRESSOR_ATTACK_MS        = 12;
-constexpr uint16_t MASTER_COMPRESSOR_RELEASE_MS       = 140;
-constexpr uint16_t MASTER_COMPRESSOR_HOLD_MS          = 16;
+constexpr uint16_t MASTER_COMPRESSOR_RELEASE_MS       = 70;
+constexpr uint16_t MASTER_COMPRESSOR_HOLD_MS          = 12;
 constexpr uint8_t  MASTER_COMPRESSOR_THRESHOLD_PERCENT= 18;  // relative to full-scale
-constexpr float    MASTER_COMPRESSOR_RATIO            = 0.45f; // 0..1 (lower = stronger)
+constexpr float    MASTER_COMPRESSOR_RATIO            = 0.75f; // 0..1 (lower = stronger)
 
 // zoom screen defaults
-// float horizZoom = 4.0f;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
-// float vertScale = 2.0f;   // amplitude schaal factor
-constexpr float DEFAULT_HORIZ_ZOOM = 4.0f;
-constexpr float DEFAULT_VERT_SCALE = 2.0f;
+constexpr float DEFAULT_HORIZ_ZOOM = 8.0f; //>1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
+constexpr float DEFAULT_VERT_SCALE = 2.0f; // amplitude schaal factor
 
 
 // --- Additional hardware pins for new features ---
 constexpr int SD_CS_PIN    = 5;  // already in use by SD
-constexpr int SPI_SCK_PIN  = 18; // SCLK (shared)
 constexpr int SPI_MOSI_PIN = 23; // MOSI (shared)
+constexpr int SPI_SCK_PIN  = 18; // SCLK (shared)
 constexpr int SPI_MISO_PIN = 19; // MISO (shared)
 
