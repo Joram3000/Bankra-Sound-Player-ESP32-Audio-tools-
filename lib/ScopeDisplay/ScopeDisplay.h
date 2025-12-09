@@ -21,8 +21,9 @@
 class ScopeDisplay {
   private:
     Adafruit_SSD1306* display;
-    TaskHandle_t displayTaskHandle;
-    SemaphoreHandle_t displayMutex;
+  TaskHandle_t displayTaskHandle;
+  SemaphoreHandle_t displayMutex;
+  volatile bool suspended = false;
     
   // Waveform data (gedeeld met ScopeI2SStream)
   int16_t* waveformBuffer;
@@ -30,8 +31,8 @@ class ScopeDisplay {
   int waveformSamples; // aantal samples in de cirkelbuffer
     
     // Zoom/state
-    float horizZoom = 4.0f;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
-    float vertScale = 2.0f;   // amplitude schaal factor
+    float horizZoom = DEFAULT_HORIZ_ZOOM;   // >1 = inzoomen (minder samples weergegeven), <1 = uitzoomen
+    float vertScale = DEFAULT_VERT_SCALE;   // amplitude schaal factor
 
     // bewaar laatst getekende Y tussen frames om jumps te voorkomen
     float lastDisplayY = NAN;
@@ -57,6 +58,10 @@ class ScopeDisplay {
      */
     void displayLoop() {
       for(;;) {
+        if (suspended) {
+          vTaskDelay(40 / portTICK_PERIOD_MS);
+          continue;
+        }
         if(xSemaphoreTake(displayMutex, portMAX_DELAY)) {
           display->clearDisplay();
           
@@ -164,6 +169,16 @@ class ScopeDisplay {
      * @param waveIdx Pointer naar buffer index
      * @param waveSamples Aantal samples in de buffer (geef dezelfde waarde als ScopeI2SStream)
      */
+    // Allow external control of horizontal zoom and vertical scale so UI
+    // settings can affect the scope rendering.
+    void setHorizZoom(float hz) { horizZoom = hz; }
+    void setVertScale(float vs) { vertScale = vs; }
+    void setSuspended(bool value) {
+      suspended = value;
+      if (!value) {
+        lastDisplayY = NAN;
+      }
+    }
     // Backward-compatible 3-arg constructor (delegates to 4-arg)
     ScopeDisplay(Adafruit_SSD1306* disp, int16_t* waveBuffer, int* waveIdx)
       : ScopeDisplay(disp, waveBuffer, waveIdx, NUM_WAVEFORM_SAMPLES) {}

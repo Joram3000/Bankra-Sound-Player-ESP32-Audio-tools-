@@ -3,23 +3,20 @@
 
 #include <AudioTools.h>
 #include <vector>
+#include <memory>
 #include <algorithm>
+#include <cmath>
 #include "AudioTools/CoreAudio/AudioEffects/AudioEffects.h"
+#include "AudioTools/CoreAudio/AudioFilter/Filter.h"
 #include <Arduino.h> // voor Serial debug
+#include "config.h"
 
-// Enable/disable debug prints (0 = uit, 1 = aan)
-#ifndef DEBUG_MIXER
-#define DEBUG_MIXER 0
-#endif
-
-class DryWetMixerStream : public AudioStream {
+class DryWetMixerStream : public ModifyingStream {
 public:
+  // Backwards-compatible begin() delegates to ModifyingStream-style setters
   void begin(I2SStream& outStream, Delay& effect) {
-    dryOutput = &outStream;
-    delay = &effect;
-#if DEBUG_MIXER
-    Serial.println("[DryWetMixer] begin()");
-#endif
+    setOutput(outStream);
+    setEffect(&effect);
   }
 
   void setMix(float dry, float wet) {
@@ -28,19 +25,52 @@ public:
     targetWetMix = effectEnabled ? wetMixActive : 0.0f;
     currentWetMix = targetWetMix;
     wetRampFramesRemaining = 0;
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] setMix dry=");
-    Serial.print(dryMix, 4);
-    Serial.print(" wetActive=");
-    Serial.print(wetMixActive, 4);
-    Serial.print(" targetWet=");
-    Serial.println(targetWetMix, 4);
-#endif
+
+  }
+
+  void configureMasterLowPass(float cutoffHz, float q = 0.7071f,
+                              bool enabled = true) {
+    inputFilterCutoff = cutoffHz;
+    inputFilterTargetCutoff = cutoffHz;
+    inputFilterQ = q;
+    inputFilterEnabled = enabled;
+    refreshInputFilterState();
+
+  }
+
+  void configureMasterCompressor(uint16_t attackMs, uint16_t releaseMs,
+                                 uint16_t holdMs, uint8_t thresholdPercent,
+                                 float compressionRatio,
+                                 bool enabled = true) {
+    compAttackMs = attackMs;
+    compReleaseMs = releaseMs;
+    compHoldMs = holdMs;
+    compThresholdPercent = thresholdPercent;
+    compRatio = compressionRatio;
+    masterCompressorEnabled = enabled;
+    refreshMasterCompressor();
+
+  }
+
+  void setMasterCompressorEnabled(bool enabled) {
+    masterCompressorEnabled = enabled;
+    if (masterCompressor) {
+      masterCompressor->setActive(enabled);
+    }
+  }
+
+  void setInputLowPassCutoff(float cutoffHz) {
+    inputFilterTargetCutoff = std::max(0.0f, cutoffHz);
+    if (!inputFilterEnabled || !inputFilterInitialized) {
+      inputFilterCutoff = inputFilterTargetCutoff;
+    }
   }
 
   void setAudioInfo(AudioInfo newInfo) override {
     AudioStream::setAudioInfo(newInfo);
     if (dryOutput) dryOutput->setAudioInfo(newInfo);
+    // propagate to internal callback stream as well
+    cbStream.setAudioInfo(newInfo);
     sampleBytes = std::max<int>(1, newInfo.bits_per_sample / 8);
     channels = std::max<int>(1, newInfo.channels);
     frameBytes = sampleBytes * channels;
@@ -56,89 +86,84 @@ public:
     const size_t reserveFrames = 256; // tweak if needed
     mixBuffer.clear();
     mixBuffer.reserve(reserveFrames * channels);
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] setAudioInfo sr=");
-    Serial.print(sampleRate);
-    Serial.print(" bits=");
-    Serial.print(newInfo.bits_per_sample);
-    Serial.print(" ch=");
-    Serial.println(channels);
-#endif
+    inputFilterTargetCutoff = inputFilterCutoff;
+    refreshInputFilterState();
+    refreshMasterCompressor();
+
+  }
+
+  // ModifyingStream API: allow this mixer to be used like other AudioTools
+  // components. We keep internal pointers to the provided stream/print
+  // objects but still prefer typed I2SStream for the dry output.
+  void setStream(Stream &in) override {
+  p_in = &in;
+
+  cbStream.setStream(in);
+  s_instance = this;
+  cbStream.setUpdateCallback(staticUpdate);
+  }
+
+  void setOutput(Print &out) override {
+    // Try to treat out as an I2SStream if possible. This cast is safe when
+    // callers pass the same I2SStream instance used previously.
+    dryOutput = reinterpret_cast<I2SStream*>(&out);
+
+  p_out = &out;
+  cbStream.setOutput(out);
+  s_instance = this;
+  cbStream.setUpdateCallback(staticUpdate);
+  }
+
+  // Configure the Delay target to use. The Delay object is not disabled by
+  // this mixer – we ensure it stays active so internal buffers keep running.
+  void setEffect(Delay* d) {
+    delay = d;
+    if (delay) delay->setActive(true);
+    s_instance = this;
+    cbStream.setUpdateCallback(staticUpdate);
   }
 
   void setEffectActive(bool active) {
-    if (delay) delay->setActive(active);
-    effectEnabled = active;
-    targetWetMix = effectEnabled ? wetMixActive : 0.0f;
-    scheduleWetRamp();
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] setEffectActive -> ");
-    Serial.print(active ? "ON" : "OFF");
-    Serial.print(" targetWet=");
-    Serial.println(targetWetMix, 4);
-#endif
+  // Do not disable the Delay object itself here. We want the delay line to
+  // keep running so echoes / feedback continue even when the wet mix is
+  // turned off. The effectEnabled flag only controls audibility (wet mix).
+  effectEnabled = active;
+  targetWetMix = effectEnabled ? wetMixActive : 0.0f;
+  scheduleWetRamp();
   }
 
   void updateEffectSampleRate(uint32_t sampleRate) {
     if (delay && sampleRate > 0) {
       delay->setSampleRate(sampleRate);
     }
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] updateEffectSampleRate ");
-    Serial.println(sampleRate);
-#endif
+
   }
 
-  void triggerAttackFade() {
-    attackFramesRemaining = attackFrames;
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] triggerAttackFade frames=");
-    Serial.println(attackFrames);
-#endif
-  }
+  // When true we actually feed the incoming audio into the delay. When false
+  // we still call delay->process(0) so the delay's internal buffer advances
+  // and the effect tail keeps playing without new input.
+  void setSendActive(bool send) {
+    sendActive = send;
 
+  }
+  // Delegate write to internal CallbackStream which will call our
+  // update callback to mix the buffer before sending it to the real output.
   size_t write(const uint8_t* data, size_t len) override {
-    if (!dryOutput || !delay || len == 0) return 0;
-    if (sampleBytes != sizeof(int16_t) && sampleBytes != sizeof(int32_t)) {
-      // Unsupported format; just pass through dry
-#if DEBUG_MIXER
-      Serial.println("[DryWetMixer] Unsupported sample size, passing through dry");
-#endif
-      return dryOutput->write(data, len);
-    }
+    return cbStream.write(data, len);
+  }
 
-    size_t processed = 0;
-    while (len > 0) {
-      if (pendingLen > 0 || len < frameBytes) {
-        size_t needed = frameBytes - pendingLen;
-        size_t copyLen = std::min(needed, len);
-        if (pendingBuffer.size() < frameBytes) pendingBuffer.resize(frameBytes);
-        memcpy(pendingBuffer.data() + pendingLen, data, copyLen);
-        pendingLen += copyLen;
-        data += copyLen;
-        len -= copyLen;
-        if (pendingLen < frameBytes) break;
-        mixAndWrite(pendingBuffer.data(), frameBytes);
-        pendingLen = 0;
-        processed += frameBytes;
-        continue;
-      }
-
-      size_t chunkLen = (len / frameBytes) * frameBytes;
-      if (chunkLen == 0) break;
-      mixAndWrite(data, chunkLen);
-      data += chunkLen;
-      len -= chunkLen;
-      processed += chunkLen;
-    }
-
-#if DEBUG_MIXER
-    // report how many bytes were processed this call
-    Serial.print("[DryWetMixer] write processed_bytes=");
-    Serial.println(processed);
-#endif
-
-    return processed;
+  // When there is no active source we can pump silence through the mixer to
+  // advance internal effects (e.g., delay buffer) so tails continue to decay.
+  // frames: number of audio frames (samples per channel) to push.
+  void pumpSilenceFrames(size_t frames) {
+    if (frames == 0) return;
+    size_t sampleCount = frames * std::max<int>(1, channels);
+    size_t byteCount = sampleCount * static_cast<size_t>(sampleBytes);
+    // allocate a temporary zero buffer on the heap to avoid stack pressure
+    std::vector<uint8_t> zeros(byteCount);
+    // write will call the CallbackStream which will call our updateCallback
+    // and thus call delay->process(0) for each frame.
+    write(zeros.data(), byteCount);
   }
 
 private:
@@ -161,18 +186,63 @@ private:
   uint32_t fadeFrames = 1;
   uint32_t wetRampFramesRemaining = 0;
   bool effectEnabled = false;
+  // When false we do not feed the incoming audio into the delay; the delay
+  // still runs and is called with silence (0) so its buffer advances.
+  bool sendActive = false;
   uint32_t attackFrames = 1;
   uint32_t attackFramesRemaining = 0;
+
+  // Input filter state (applied before wet send and dry output)
+  std::vector<std::unique_ptr<LowPassFilter<float>>> inputLowPassFilters;
+  bool inputFilterEnabled = false;
+  bool inputFilterInitialized = false;
+  float inputFilterCutoff = 0.0f;
+  float inputFilterTargetCutoff = 0.0f;
+  float inputFilterQ = 0.7071f;
+  const float inputFilterSlewRateHzPerSec = 8000.0f;
+  std::vector<float> filteredDryScratch;
+  std::unique_ptr<Compressor> masterCompressor;
+  bool masterCompressorEnabled = false;
+  uint16_t compAttackMs = 10;
+  uint16_t compReleaseMs = 120;
+  uint16_t compHoldMs = 10;
+  uint8_t compThresholdPercent = 15;
+  float compRatio = 0.5f;
 
   // debug counters
   uint32_t debugFrameCounter = 0;
   const uint32_t debugFrameInterval = 100; // print every N frames
+  // ModifyingStream targets
+  Stream* p_in = nullptr;
+  Print* p_out = nullptr;
+  // internal CallbackStream used to hook into AudioTools processing
+  CallbackStream cbStream;
+
+  // static instance pointer for callback forwarding (assumes single mixer)
+  static DryWetMixerStream* s_instance;
+
+  // static callback invoked by CallbackStream; forwards to instance method
+  static size_t staticUpdate(uint8_t* data, size_t len) {
+    if (s_instance) return s_instance->updateCallback(data, len);
+    return len;
+  }
 
   void mixAndWrite(const uint8_t* chunk, size_t chunkLen) {
+    // Provide an update-style API which rewrites the incoming buffer in-place
+    // with mixed output. This method is also used as the core implementation
+    // for the CallbackStream update callback.
+  }
+
+  // Called by staticUpdate to perform the mixing and write results back into
+  // the provided byte buffer. Returns number of bytes written (len) or 0 on
+  // error.
+  size_t updateCallback(uint8_t* chunk, size_t chunkLen) {
     size_t frames = chunkLen / frameBytes;
-    if (frames == 0) return;
+    if (!dryOutput || !delay || frames == 0) return 0;
     size_t sampleCount = frames * channels;
     mixBuffer.resize(sampleCount);
+
+  advanceInputFilterCutoff(frames);
 
     const int16_t* input = nullptr;
     if (sampleBytes == sizeof(int16_t)) {
@@ -188,50 +258,67 @@ private:
       }
       input = convertedInput.data();
     } else {
-      return;
+      return 0;
     }
 
     int16_t* mixed = mixBuffer.data();
+    if (filteredDryScratch.size() < static_cast<size_t>(channels)) {
+      filteredDryScratch.resize(static_cast<size_t>(channels), 0.0f);
+    }
 
     for (size_t frame = 0; frame < frames; ++frame) {
-      int32_t mono = 0;
+      float monoSum = 0.0f;
       for (int ch = 0; ch < channels; ++ch) {
-        mono += input[frame * channels + ch];
+        float sampleValue = static_cast<float>(input[frame * channels + ch]);
+        float filtered = processInputLowPass(sampleValue, ch);
+        if (filtered > 32767.0f) filtered = 32767.0f;
+        if (filtered < -32768.0f) filtered = -32768.0f;
+        filteredDryScratch[ch] = filtered;
+        monoSum += filtered;
       }
-      mono /= channels;
-
-      effect_t wetSample = delay->process(static_cast<effect_t>(mono));
+      float filteredMono = (channels > 0) ? (monoSum / static_cast<float>(channels)) : monoSum;
+      effect_t wetInput = sendActive ? static_cast<effect_t>(filteredMono) : 0;
+      // Always run the delay process so its internal buffer advances.
+      // When send is muted we still feed silence so the delay tail keeps moving.
+      effect_t wetSample = delay->process(wetInput);
       float wetLevel = advanceWetMix();
       float attackGain = advanceAttackGain();
 
       // debug: print a sample occasionally to observe wet sample and levels
-#if DEBUG_MIXER
-      if ((debugFrameCounter++ % debugFrameInterval) == 0) {
-        Serial.print("[DryWetMixer] frameSample mono=");
-        Serial.print(mono);
-        Serial.print(" wetSample=");
-        Serial.print((int)wetSample);
-        Serial.print(" wetLevel=");
-        Serial.print(wetLevel, 4);
-        Serial.print(" dryMix=");
-        Serial.print(dryMix, 4);
-        Serial.print(" effectEnabled=");
-        Serial.println(effectEnabled ? "1" : "0");
-      }
-#endif
+
 
       for (int ch = 0; ch < channels; ++ch) {
-        int32_t dryVal = input[frame * channels + ch];
+        int32_t dryVal = static_cast<int32_t>(filteredDryScratch[ch]);
         int32_t mixedVal = static_cast<int32_t>(dryMix * dryVal + wetLevel * wetSample);
         if (attackGain < 0.999f) {
           mixedVal = static_cast<int32_t>(mixedVal * attackGain);
         }
         if (mixedVal > 32767) mixedVal = 32767;
         if (mixedVal < -32768) mixedVal = -32768;
-        mixed[frame * channels + ch] = static_cast<int16_t>(mixedVal);
+        int16_t outputSample = static_cast<int16_t>(mixedVal);
+        if (masterCompressor) {
+          outputSample = masterCompressor->process(static_cast<effect_t>(outputSample));
+        }
+        mixed[frame * channels + ch] = outputSample;
       }
     }
-    writeMixedFrames(mixed, frames);
+
+    // Write mixed samples back into chunk
+    if (sampleBytes == sizeof(int16_t)) {
+      memcpy(chunk, mixed, sampleCount * sizeof(int16_t));
+      return sampleCount * sizeof(int16_t);
+    }
+
+    if (sampleBytes == sizeof(int32_t)) {
+      expandedOutput.resize(sampleCount);
+      for (size_t i = 0; i < sampleCount; ++i) {
+        expandedOutput[i] = static_cast<int32_t>(mixed[i]) << 16;
+      }
+      memcpy(chunk, expandedOutput.data(), sampleCount * sizeof(int32_t));
+      return sampleCount * sizeof(int32_t);
+    }
+
+    return 0;
   }
 
   void writeMixedFrames(const int16_t* mixed, size_t frames) {
@@ -283,4 +370,121 @@ private:
     if (gain > 1.0f) gain = 1.0f;
     return gain;
   }
+
+  void refreshInputFilterState() {
+    inputFilterInitialized = false;
+    if (channels <= 0) {
+      inputLowPassFilters.clear();
+      filteredDryScratch.clear();
+      return;
+    }
+
+    filteredDryScratch.assign(static_cast<size_t>(channels), 0.0f);
+
+    if (!inputFilterEnabled || sampleRate == 0) {
+      inputFilterCutoff = inputFilterTargetCutoff;
+      return;
+    }
+
+    if (inputLowPassFilters.size() < static_cast<size_t>(channels)) {
+      inputLowPassFilters.resize(static_cast<size_t>(channels));
+    }
+
+    for (int ch = 0; ch < channels; ++ch) {
+      if (!inputLowPassFilters[ch]) {
+        inputLowPassFilters[ch].reset(new LowPassFilter<float>());
+      }
+    }
+
+    if (inputFilterTargetCutoff <= 0.0f) {
+      inputFilterTargetCutoff = std::max(0.0f, inputFilterCutoff);
+    }
+    inputFilterCutoff = inputFilterTargetCutoff;
+    inputFilterInitialized = true;
+    applyInputFilterCutoff(inputFilterCutoff);
+  }
+
+  float processInputLowPass(float sample, int channelIndex) {
+    if (!inputFilterEnabled || !inputFilterInitialized) {
+      return sample;
+    }
+    if (channelIndex < 0 ||
+        channelIndex >= static_cast<int>(inputLowPassFilters.size())) {
+      return sample;
+    }
+    LowPassFilter<float>* filter = inputLowPassFilters[channelIndex].get();
+    if (filter == nullptr) return sample;
+    return filter->process(sample);
+  }
+
+  void applyInputFilterCutoff(float cutoffHz) {
+    if (!inputFilterEnabled || sampleRate == 0) {
+      return;
+    }
+    if (inputLowPassFilters.empty()) {
+      return;
+    }
+    float clampedCutoff = cutoffHz;
+    if (clampedCutoff < 0.0f) {
+      clampedCutoff = 0.0f;
+    }
+    for (size_t i = 0; i < inputLowPassFilters.size(); ++i) {
+      LowPassFilter<float>* filter = inputLowPassFilters[i].get();
+      if (filter) {
+        filter->begin(clampedCutoff, static_cast<float>(sampleRate), inputFilterQ);
+      }
+    }
+  }
+
+  void advanceInputFilterCutoff(size_t frames) {
+    if (!inputFilterEnabled || !inputFilterInitialized) {
+      return;
+    }
+    if (sampleRate == 0) {
+      return;
+    }
+    float delta = inputFilterTargetCutoff - inputFilterCutoff;
+    const float epsilon = 0.05f;
+    if (fabs(delta) <= epsilon) {
+      if (inputFilterCutoff != inputFilterTargetCutoff) {
+        inputFilterCutoff = inputFilterTargetCutoff;
+        applyInputFilterCutoff(inputFilterCutoff);
+      }
+      return;
+    }
+
+    float seconds;
+    if (frames > 0) {
+      seconds = static_cast<float>(frames) / static_cast<float>(sampleRate);
+    } else {
+      seconds = 1.0f / static_cast<float>(sampleRate);
+    }
+    float maxStep = inputFilterSlewRateHzPerSec * seconds;
+    if (maxStep <= 0.0f) {
+      maxStep = inputFilterSlewRateHzPerSec / static_cast<float>(sampleRate);
+    }
+    if (delta > maxStep) {
+      delta = maxStep;
+    } else if (delta < -maxStep) {
+      delta = -maxStep;
+    }
+
+    inputFilterCutoff += delta;
+    if (inputFilterCutoff < 0.0f) {
+      inputFilterCutoff = 0.0f;
+    }
+    applyInputFilterCutoff(inputFilterCutoff);
+  }
+
+  void refreshMasterCompressor() {
+    if (sampleRate == 0) {
+      masterCompressor.reset();
+      return;
+    }
+  masterCompressor.reset(new Compressor(sampleRate, compAttackMs,
+                      compReleaseMs, compHoldMs,
+                      compThresholdPercent, compRatio));
+    masterCompressor->setActive(masterCompressorEnabled);
+  }
 };
+

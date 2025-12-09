@@ -60,3 +60,35 @@ void updateUi(bool playing, const String& filename) {
     scopeDisplay.updateStatus(playing, fn);
   }
 }
+
+U8G2* getU8g2Display() {
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  return &display;
+#else
+  return nullptr;
+#endif
+}
+
+void* getDisplayMutex() {
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  return scopeDisplay.getMutex();
+#else
+  return nullptr;
+#endif
+}
+
+void setScopeHorizZoom(float z) {
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  scopeDisplay.setHorizZoom(z);
+#else
+  (void)z;
+#endif
+}
+
+void setScopeDisplaySuspended(bool suspended) {
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  scopeDisplay.setSuspended(suspended);
+#else
+  scopeDisplay.setSuspended(suspended);
+#endif
+}

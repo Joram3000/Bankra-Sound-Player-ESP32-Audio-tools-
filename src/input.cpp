@@ -44,39 +44,115 @@ bool Button::update(uint32_t now) {
 }
 
 void Button::release() { latched = false; lastTriggerTime = 0; }
+
+void Button::sync(uint32_t now) {
+  bool raw = activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+  rawState = raw;
+  debouncedState = raw;
+  latched = raw;
+  lastDebounceTime = now;
+  lastTriggerTime = raw ? now : 0;
+}
+
+bool Button::readRaw() const {
+  return activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+}
 bool Button::isLatched() const { return latched; }
 const char* Button::getPath() const { return samplePath; }
 
 // VolumeManager implementations
-VolumeManager::VolumeManager(int adcPin) : adcPin(adcPin) {}
+VolumeManager::VolumeManager(int adcPin)
+  : adcPin(adcPin), cachedVolumeControl(expoControl) {}
 
 extern AudioPlayer player; // defined in bankrasampler.cpp
 
-float normalizeVolumeFromAdc(int raw);
+namespace {
+float normalizeVolumeFromAdc(int raw) {
+  const float adcMax = 4095.0f;
+  float v = 1.0f - (static_cast<float>(raw) / adcMax);
+  return constrain(v, 0.0f, 1.0f);
+}
+}
 
 void VolumeManager::begin() {
   pinMode(adcPin, INPUT);
   lastSampleTime = 0;
   lastVolume = normalizeVolumeFromAdc(analogRead(adcPin));
   rampVolume = lastVolume;
-  player.setVolume(lastVolume);
+  float curved = applyVolumeCurve(lastVolume);
+  rampVolume = curved;
+  player.setVolume(curved);
 }
 
 void VolumeManager::update(uint32_t now) {
   if ((now - lastSampleTime) < VOLUME_READ_INTERVAL_MS) return;
   lastSampleTime = now;
-  float target = normalizeVolumeFromAdc(analogRead(adcPin));
+  float normalized = normalizeVolumeFromAdc(analogRead(adcPin));
+  if (currentMode == Mode::Cutoff) {
+    handleCutoffMode(normalized);
+  } else {
+    handleVolumeMode(normalized);
+  }
+}
+
+void VolumeManager::setFilterControlActive(bool active) {
+  Mode newMode = active ? Mode::Cutoff : Mode::Volume;
+  if (currentMode == newMode) return;
+  currentMode = newMode;
+  if (currentMode == Mode::Cutoff) {
+    smoothedCutoffHz = -1.0f;
+    lastCutoffHz = -1.0f;
+  } else {
+    lastVolume = -1.0f;
+  }
+}
+
+void VolumeManager::setCutoffUpdateCallback(CutoffCallback cb) {
+  cutoffCallback = cb;
+}
+
+void VolumeManager::forceImmediateSample() { lastSampleTime = 0; }
+
+float VolumeManager::applyVolumeCurve(float input) {
+  return cachedVolumeControl.getVolumeFactor(constrain(input, 0.0f, 1.0f));
+}
+
+void VolumeManager::handleVolumeMode(float normalized) {
+  float target = applyVolumeCurve(normalized);
   if (lastVolume < 0.0f || fabs(target - lastVolume) >= VOLUME_DEADBAND) {
     lastVolume = target;
   }
-  // Ramp volume towards target
-  float rampStep = 0.8f; // Adjust for speed of ramp (smaller = slower)
+  float rampStep = 0.05f;
   if (fabs(rampVolume - lastVolume) > rampStep) {
     if (rampVolume < lastVolume) rampVolume += rampStep;
     else rampVolume -= rampStep;
+    rampVolume = constrain(rampVolume, 0.0f, 1.0f);
     player.setVolume(rampVolume);
   } else {
     rampVolume = lastVolume;
     player.setVolume(rampVolume);
   }
+}
+
+void VolumeManager::handleCutoffMode(float normalized) {
+  float target = mapNormalizedToCutoff(normalized);
+  float alpha = constrain(LOW_PASS_CUTOFF_SMOOTH_ALPHA, 0.0f, 1.0f);
+  if (smoothedCutoffHz < 0.0f || alpha <= 0.0f) {
+    smoothedCutoffHz = target;
+  } else {
+    smoothedCutoffHz += alpha * (target - smoothedCutoffHz);
+  }
+  if (!cutoffCallback) return;
+  const float cutoffDeadband = LOW_PASS_CUTOFF_DEADBAND_HZ;
+  if (lastCutoffHz < 0.0f || fabs(smoothedCutoffHz - lastCutoffHz) >= cutoffDeadband) {
+    lastCutoffHz = smoothedCutoffHz;
+    cutoffCallback(smoothedCutoffHz);
+  }
+}
+
+float VolumeManager::mapNormalizedToCutoff(float normalized) const {
+  float minHz = LOW_PASS_MIN_HZ;
+  float maxHz = LOW_PASS_MAX_HZ;
+  float clamped = constrain(normalized, 0.0f, 1.0f);
+  return minHz + (maxHz - minHz) * clamped;
 }

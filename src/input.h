@@ -2,6 +2,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include <functional>
+#include "AudioTools/CoreAudio/VolumeControl.h"
 
 class Button {
 public:
@@ -9,6 +11,8 @@ public:
   void begin();
   bool update(uint32_t now);
   void release();
+  void sync(uint32_t now);
+  bool readRaw() const;
   bool isLatched() const;
   const char* getPath() const;
 
@@ -28,9 +32,24 @@ public:
   VolumeManager(int adcPin);
   void begin();
   void update(uint32_t now);
+  void setFilterControlActive(bool active);
+  using CutoffCallback = std::function<void(float)>;
+  void setCutoffUpdateCallback(CutoffCallback cb);
+  void forceImmediateSample();
 private:
+  enum class Mode { Volume, Cutoff };
+  Mode currentMode = Mode::Volume;
   int adcPin;
   uint32_t lastSampleTime = 0;
   float lastVolume = -1.0f;
   float rampVolume = -1.0f;
+  float lastCutoffHz = -1.0f;
+  float smoothedCutoffHz = -1.0f;
+  CutoffCallback cutoffCallback;
+  audio_tools::ExponentialVolumeControl expoControl;
+  audio_tools::CachedVolumeControl cachedVolumeControl;
+  float applyVolumeCurve(float input);
+  float mapNormalizedToCutoff(float normalized) const;
+  void handleVolumeMode(float normalized);
+  void handleCutoffMode(float normalized);
 };
