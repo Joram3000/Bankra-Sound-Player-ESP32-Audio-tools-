@@ -44,6 +44,19 @@ bool Button::update(uint32_t now) {
 }
 
 void Button::release() { latched = false; lastTriggerTime = 0; }
+
+void Button::sync(uint32_t now) {
+  bool raw = activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+  rawState = raw;
+  debouncedState = raw;
+  latched = raw;
+  lastDebounceTime = now;
+  lastTriggerTime = raw ? now : 0;
+}
+
+bool Button::readRaw() const {
+  return activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+}
 bool Button::isLatched() const { return latched; }
 const char* Button::getPath() const { return samplePath; }
 
@@ -123,14 +136,14 @@ void VolumeManager::handleVolumeMode(float normalized) {
 
 void VolumeManager::handleCutoffMode(float normalized) {
   float target = mapNormalizedToCutoff(normalized);
-  float alpha = constrain(MASTER_LOW_PASS_CUTOFF_SMOOTH_ALPHA, 0.0f, 1.0f);
+  float alpha = constrain(LOW_PASS_CUTOFF_SMOOTH_ALPHA, 0.0f, 1.0f);
   if (smoothedCutoffHz < 0.0f || alpha <= 0.0f) {
     smoothedCutoffHz = target;
   } else {
     smoothedCutoffHz += alpha * (target - smoothedCutoffHz);
   }
   if (!cutoffCallback) return;
-  const float cutoffDeadband = MASTER_LOW_PASS_CUTOFF_DEADBAND_HZ;
+  const float cutoffDeadband = LOW_PASS_CUTOFF_DEADBAND_HZ;
   if (lastCutoffHz < 0.0f || fabs(smoothedCutoffHz - lastCutoffHz) >= cutoffDeadband) {
     lastCutoffHz = smoothedCutoffHz;
     cutoffCallback(smoothedCutoffHz);
@@ -138,8 +151,8 @@ void VolumeManager::handleCutoffMode(float normalized) {
 }
 
 float VolumeManager::mapNormalizedToCutoff(float normalized) const {
-  float minHz = MASTER_LOW_PASS_MIN_HZ;
-  float maxHz = MASTER_LOW_PASS_MAX_HZ;
+  float minHz = LOW_PASS_MIN_HZ;
+  float maxHz = LOW_PASS_MAX_HZ;
   float clamped = constrain(normalized, 0.0f, 1.0f);
   return minHz + (maxHz - minHz) * clamped;
 }

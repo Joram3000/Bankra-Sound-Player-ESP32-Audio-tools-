@@ -11,6 +11,8 @@ public:
   void begin();
   bool update(uint32_t now);
   void release();
+  void sync(uint32_t now);
+  bool readRaw() const;
   bool isLatched() const;
   const char* getPath() const;
 
