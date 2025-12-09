@@ -10,20 +10,12 @@
 #include <Arduino.h> // voor Serial debug
 #include "config.h"
 
-// Enable/disable debug prints (0 = uit, 1 = aan)
-#ifndef DEBUG_MIXER
-#define DEBUG_MIXER 0
-#endif
-
 class DryWetMixerStream : public ModifyingStream {
 public:
   // Backwards-compatible begin() delegates to ModifyingStream-style setters
   void begin(I2SStream& outStream, Delay& effect) {
     setOutput(outStream);
     setEffect(&effect);
-#if DEBUG_MIXER
-    Serial.println("[DryWetMixer] begin()");
-#endif
   }
 
   void setMix(float dry, float wet) {
@@ -32,14 +24,7 @@ public:
     targetWetMix = effectEnabled ? wetMixActive : 0.0f;
     currentWetMix = targetWetMix;
     wetRampFramesRemaining = 0;
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] setMix dry=");
-    Serial.print(dryMix, 4);
-    Serial.print(" wetActive=");
-    Serial.print(wetMixActive, 4);
-    Serial.print(" targetWet=");
-    Serial.println(targetWetMix, 4);
-#endif
+
   }
 
   void configureMasterLowPass(float cutoffHz, float q = 0.7071f,
@@ -48,14 +33,7 @@ public:
     inputFilterQ = q;
     inputFilterEnabled = enabled;
     refreshInputFilterState();
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] configureInputLowPass cutoff=");
-    Serial.print(inputFilterCutoff);
-    Serial.print(" q=");
-    Serial.print(inputFilterQ, 4);
-    Serial.print(" enabled=");
-    Serial.println(inputFilterEnabled ? "yes" : "no");
-#endif
+
   }
 
   void configureMasterCompressor(uint16_t attackMs, uint16_t releaseMs,
@@ -69,20 +47,7 @@ public:
     compRatio = compressionRatio;
     masterCompressorEnabled = enabled;
     refreshMasterCompressor();
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] configureMasterCompressor attack=");
-    Serial.print(compAttackMs);
-    Serial.print(" release=");
-    Serial.print(compReleaseMs);
-    Serial.print(" hold=");
-    Serial.print(compHoldMs);
-    Serial.print(" threshold%=");
-    Serial.print(compThresholdPercent);
-    Serial.print(" ratio=");
-    Serial.print(compRatio, 3);
-    Serial.print(" enabled=");
-    Serial.println(masterCompressorEnabled ? "yes" : "no");
-#endif
+
   }
 
   void setMasterCompressorEnabled(bool enabled) {
@@ -130,14 +95,7 @@ public:
     mixBuffer.reserve(reserveFrames * channels);
     refreshInputFilterState();
   refreshMasterCompressor();
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] setAudioInfo sr=");
-    Serial.print(sampleRate);
-    Serial.print(" bits=");
-    Serial.print(newInfo.bits_per_sample);
-    Serial.print(" ch=");
-    Serial.println(channels);
-#endif
+
   }
 
   // ModifyingStream API: allow this mixer to be used like other AudioTools
@@ -145,9 +103,7 @@ public:
   // objects but still prefer typed I2SStream for the dry output.
   void setStream(Stream &in) override {
   p_in = &in;
-#if DEBUG_MIXER
-  Serial.println("[DryWetMixer] setStream()");
-#endif
+
   cbStream.setStream(in);
   s_instance = this;
   cbStream.setUpdateCallback(staticUpdate);
@@ -157,9 +113,7 @@ public:
     // Try to treat out as an I2SStream if possible. This cast is safe when
     // callers pass the same I2SStream instance used previously.
     dryOutput = reinterpret_cast<I2SStream*>(&out);
-#if DEBUG_MIXER
-  Serial.println("[DryWetMixer] setOutput()");
-#endif
+
   p_out = &out;
   cbStream.setOutput(out);
   s_instance = this;
@@ -182,22 +136,13 @@ public:
   effectEnabled = active;
   targetWetMix = effectEnabled ? wetMixActive : 0.0f;
   scheduleWetRamp();
-#if DEBUG_MIXER
-  Serial.print("[DryWetMixer] setEffectActive -> ");
-  Serial.print(active ? "ON" : "OFF");
-  Serial.print(" targetWet=");
-  Serial.println(targetWetMix, 4);
-#endif
   }
 
   void updateEffectSampleRate(uint32_t sampleRate) {
     if (delay && sampleRate > 0) {
       delay->setSampleRate(sampleRate);
     }
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] updateEffectSampleRate ");
-    Serial.println(sampleRate);
-#endif
+
   }
 
   // When true we actually feed the incoming audio into the delay. When false
@@ -205,10 +150,7 @@ public:
   // and the effect tail keeps playing without new input.
   void setSendActive(bool send) {
     sendActive = send;
-#if DEBUG_MIXER
-    Serial.print("[DryWetMixer] setSendActive -> ");
-    Serial.println(send ? "SEND" : "NOSEND");
-#endif
+
   }
   // Delegate write to internal CallbackStream which will call our
   // update callback to mix the buffer before sending it to the real output.
@@ -345,20 +287,7 @@ private:
       float attackGain = advanceAttackGain();
 
       // debug: print a sample occasionally to observe wet sample and levels
-#if DEBUG_MIXER
-      if ((debugFrameCounter++ % debugFrameInterval) == 0) {
-        Serial.print("[DryWetMixer] frameSample mono=");
-        Serial.print(mono);
-        Serial.print(" wetSample=");
-        Serial.print((int)wetSample);
-        Serial.print(" wetLevel=");
-        Serial.print(wetLevel, 4);
-        Serial.print(" dryMix=");
-        Serial.print(dryMix, 4);
-        Serial.print(" effectEnabled=");
-        Serial.println(effectEnabled ? "1" : "0");
-      }
-#endif
+
 
       for (int ch = 0; ch < channels; ++ch) {
         int32_t dryVal = static_cast<int32_t>(filteredDryScratch[ch]);
