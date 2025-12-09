@@ -20,19 +20,19 @@ public:
   }
 
   void setMix(float dry, float wet) {
-    dryMix = dry;
-    wetMixActive = wet;
+    dryMix = clampFloat(dry, MIXER_DRY_MIN, MIXER_DRY_MAX);
+    wetMixActive = clampFloat(wet, MIXER_WET_MIN, MIXER_WET_MAX);
     targetWetMix = effectEnabled ? wetMixActive : 0.0f;
     currentWetMix = targetWetMix;
     wetRampFramesRemaining = 0;
 
   }
 
-  void configureMasterLowPass(float cutoffHz, float q = 0.7071f,
+  void configureMasterLowPass(float cutoffHz, float q = LOW_PASS_Q,
                               bool enabled = true) {
-    inputFilterCutoff = cutoffHz;
-    inputFilterTargetCutoff = cutoffHz;
-    inputFilterQ = q;
+    inputFilterCutoff = clampFloat(cutoffHz, LOW_PASS_MIN_HZ, LOW_PASS_MAX_HZ);
+    inputFilterTargetCutoff = inputFilterCutoff;
+    setInputLowPassQ(q);
     inputFilterEnabled = enabled;
     refreshInputFilterState();
 
@@ -60,10 +60,23 @@ public:
   }
 
   void setInputLowPassCutoff(float cutoffHz) {
-    inputFilterTargetCutoff = std::max(0.0f, cutoffHz);
+    inputFilterTargetCutoff = clampFloat(cutoffHz, 0.0f, LOW_PASS_MAX_HZ);
     if (!inputFilterEnabled || !inputFilterInitialized) {
       inputFilterCutoff = inputFilterTargetCutoff;
     }
+  }
+
+  void setInputLowPassQ(float q) {
+    inputFilterQ = clampFloat(q, LOW_PASS_Q_MIN, LOW_PASS_Q_MAX);
+    if (inputFilterEnabled && inputFilterInitialized) {
+      applyInputFilterCutoff(inputFilterCutoff);
+    }
+  }
+
+  void setInputLowPassSlewRate(float hzPerSec) {
+    inputFilterSlewRateHzPerSec = clampFloat(hzPerSec,
+                                             FILTER_SLEW_MIN_HZ_PER_SEC,
+                                             FILTER_SLEW_MAX_HZ_PER_SEC);
   }
 
   void setAudioInfo(AudioInfo newInfo) override {
@@ -169,10 +182,10 @@ public:
 private:
   I2SStream* dryOutput = nullptr;
   Delay* delay = nullptr;
-  float dryMix = 1.0f;
-  float wetMixActive = 0.35f;
-  float currentWetMix = 0.0f;
-  float targetWetMix = 0.0f;
+  float dryMix = MIXER_DEFAULT_DRY_LEVEL;
+  float wetMixActive = MIXER_DEFAULT_WET_LEVEL;
+  float currentWetMix = MIXER_DEFAULT_WET_LEVEL;
+  float targetWetMix = MIXER_DEFAULT_WET_LEVEL;
   float wetRampDelta = 0.0f;
   int sampleBytes = sizeof(int16_t);
   int channels = 2;
@@ -196,18 +209,18 @@ private:
   std::vector<std::unique_ptr<LowPassFilter<float>>> inputLowPassFilters;
   bool inputFilterEnabled = false;
   bool inputFilterInitialized = false;
-  float inputFilterCutoff = 0.0f;
-  float inputFilterTargetCutoff = 0.0f;
-  float inputFilterQ = 0.7071f;
-  const float inputFilterSlewRateHzPerSec = 8000.0f;
+  float inputFilterCutoff = LOW_PASS_CUTOFF_HZ;
+  float inputFilterTargetCutoff = LOW_PASS_CUTOFF_HZ;
+  float inputFilterQ = LOW_PASS_Q;
+  float inputFilterSlewRateHzPerSec = FILTER_SLEW_DEFAULT_HZ_PER_SEC;
   std::vector<float> filteredDryScratch;
   std::unique_ptr<Compressor> masterCompressor;
   bool masterCompressorEnabled = false;
-  uint16_t compAttackMs = 10;
-  uint16_t compReleaseMs = 120;
-  uint16_t compHoldMs = 10;
-  uint8_t compThresholdPercent = 15;
-  float compRatio = 0.5f;
+  uint16_t compAttackMs = MASTER_COMPRESSOR_ATTACK_MS;
+  uint16_t compReleaseMs = MASTER_COMPRESSOR_RELEASE_MS;
+  uint16_t compHoldMs = MASTER_COMPRESSOR_HOLD_MS;
+  uint8_t compThresholdPercent = MASTER_COMPRESSOR_THRESHOLD_PERCENT;
+  float compRatio = MASTER_COMPRESSOR_RATIO;
 
   // debug counters
   uint32_t debugFrameCounter = 0;
@@ -485,6 +498,16 @@ private:
                       compReleaseMs, compHoldMs,
                       compThresholdPercent, compRatio));
     masterCompressor->setActive(masterCompressorEnabled);
+  }
+
+  static float clampFloat(float value, float minValue, float maxValue) {
+    if (value < minValue) {
+      return minValue;
+    }
+    if (value > maxValue) {
+      return maxValue;
+    }
+    return value;
   }
 };
 

@@ -35,9 +35,18 @@ DryWetMixerStream* DryWetMixerStream::s_instance = nullptr;
 int activeButtonIndex = -1;
 String currentSamplePath = "";
 float currentFilterCutoffHz = LOW_PASS_CUTOFF_HZ;
-float currentDelayTimeMs = 420.0f;
-float currentDelayDepth = 0.40f;
-float currentDelayFeedback = 0.45f;
+float currentFilterQ = LOW_PASS_Q;
+float currentFilterSlewHzPerSec = FILTER_SLEW_DEFAULT_HZ_PER_SEC;
+float currentDelayTimeMs = DEFAULT_DELAY_TIME_MS;
+float currentDelayDepth = DEFAULT_DELAY_DEPTH;
+float currentDelayFeedback = DEFAULT_DELAY_FEEDBACK;
+float currentDryMix = MIXER_DEFAULT_DRY_LEVEL;
+float currentWetMix = MIXER_DEFAULT_WET_LEVEL;
+uint16_t currentCompAttackMs = MASTER_COMPRESSOR_ATTACK_MS;
+uint16_t currentCompReleaseMs = MASTER_COMPRESSOR_RELEASE_MS;
+uint16_t currentCompHoldMs = MASTER_COMPRESSOR_HOLD_MS;
+uint8_t currentCompThresholdPercent = MASTER_COMPRESSOR_THRESHOLD_PERCENT;
+float currentCompRatio = MASTER_COMPRESSOR_RATIO;
 
 // Settings screen instance (created at runtime after display init)
 SettingsScreenU8g2* settingsScreen = nullptr;
@@ -93,9 +102,9 @@ void initDisplay() {
 //check which parts and lines arent used anymore and delete them
 void initAudio() {
   auto cfg = scopeI2s.defaultConfig(TX_MODE);
-  cfg.pin_bck = 14; //needs to be moved to config.h
-  cfg.pin_ws  = 15; //needs to be moved to config.h
-  cfg.pin_data = 32; //needs to be moved to config.h
+  cfg.pin_bck = I2S_PIN_BCK;
+  cfg.pin_ws  = I2S_PIN_WS;
+  cfg.pin_data = I2S_PIN_DATA;
   scopeI2s.begin(cfg);
   mixerStream.begin(scopeI2s, delayEffect);
   uint32_t effectiveSampleRate = cfg.sample_rate > 0 ? cfg.sample_rate : 44100;
@@ -105,13 +114,14 @@ void initAudio() {
   mixInfo.bits_per_sample = cfg.bits_per_sample > 0 ? cfg.bits_per_sample : 16;
   mixerStream.setAudioInfo(mixInfo);
   mixerStream.updateEffectSampleRate(effectiveSampleRate);
-  mixerStream.setMix(1.0f, 0.75f);
-  mixerStream.configureMasterCompressor(MASTER_COMPRESSOR_ATTACK_MS,
-                                        MASTER_COMPRESSOR_RELEASE_MS,
-                                        MASTER_COMPRESSOR_HOLD_MS,
-                                        MASTER_COMPRESSOR_THRESHOLD_PERCENT,
-                                        MASTER_COMPRESSOR_RATIO,
+  mixerStream.setMix(currentDryMix, currentWetMix);
+  mixerStream.configureMasterCompressor(currentCompAttackMs,
+                                        currentCompReleaseMs,
+                                        currentCompHoldMs,
+                                        currentCompThresholdPercent,
+                                        currentCompRatio,
                                         MASTER_COMPRESSOR_ENABLED);
+  mixerStream.setInputLowPassSlewRate(currentFilterSlewHzPerSec);
   delayEffect.setDuration(static_cast<uint32_t>(currentDelayTimeMs));      // milliseconds
   delayEffect.setDepth(currentDelayDepth);       // wet mix ratio handled in mixer
   delayEffect.setFeedback(currentDelayFeedback);    // repeats
@@ -125,8 +135,9 @@ void initAudio() {
 }
 
 void applyFilterSwitchState(bool enabled) {
+  mixerStream.setInputLowPassSlewRate(currentFilterSlewHzPerSec);
   mixerStream.configureMasterLowPass(currentFilterCutoffHz,
-                                     LOW_PASS_Q, enabled);
+                                     currentFilterQ, enabled);
 }
 
 // play helper
@@ -179,12 +190,68 @@ static void initSettingsScreen() {
     currentFilterCutoffHz = cutoffHz;
     applyFilterSwitchState(filterSwitchDebouncedState);
   });
+  settingsScreen->setFilterQCallback([](float q) {
+    currentFilterQ = q;
+    mixerStream.setInputLowPassQ(q);
+  });
+  settingsScreen->setFilterSlewCallback([](float hzPerSec) {
+    currentFilterSlewHzPerSec = hzPerSec;
+    mixerStream.setInputLowPassSlewRate(hzPerSec);
+  });
+  auto applyMix = []() {
+    mixerStream.setMix(currentDryMix, currentWetMix);
+  };
+  settingsScreen->setDryMixCallback([applyMix](float dry) {
+    currentDryMix = dry;
+    applyMix();
+  });
+  settingsScreen->setWetMixCallback([applyMix](float wet) {
+    currentWetMix = wet;
+    applyMix();
+  });
+  auto rebuildCompressor = []() {
+    mixerStream.configureMasterCompressor(currentCompAttackMs,
+                                          currentCompReleaseMs,
+                                          currentCompHoldMs,
+                                          currentCompThresholdPercent,
+                                          currentCompRatio,
+                                          MASTER_COMPRESSOR_ENABLED);
+  };
+  settingsScreen->setCompressorAttackCallback([rebuildCompressor](float attackMs) {
+    currentCompAttackMs = static_cast<uint16_t>(attackMs);
+    rebuildCompressor();
+  });
+  settingsScreen->setCompressorReleaseCallback([rebuildCompressor](float releaseMs) {
+    currentCompReleaseMs = static_cast<uint16_t>(releaseMs);
+    rebuildCompressor();
+  });
+  settingsScreen->setCompressorHoldCallback([rebuildCompressor](float holdMs) {
+    currentCompHoldMs = static_cast<uint16_t>(holdMs);
+    rebuildCompressor();
+  });
+  settingsScreen->setCompressorThresholdCallback([rebuildCompressor](float thresholdPercent) {
+    currentCompThresholdPercent = static_cast<uint8_t>(thresholdPercent);
+    rebuildCompressor();
+  });
+  settingsScreen->setCompressorRatioCallback([rebuildCompressor](float ratio) {
+    currentCompRatio = ratio;
+    rebuildCompressor();
+  });
 
   settingsScreen->setZoom(DEFAULT_HORIZ_ZOOM);
   settingsScreen->setDelayTimeMs(currentDelayTimeMs);
   settingsScreen->setDelayDepth(currentDelayDepth);
   settingsScreen->setDelayFeedback(currentDelayFeedback);
   settingsScreen->setFilterCutoffHz(currentFilterCutoffHz);
+  settingsScreen->setFilterQ(currentFilterQ);
+  settingsScreen->setFilterSlewHzPerSec(currentFilterSlewHzPerSec);
+  settingsScreen->setDryMix(currentDryMix);
+  settingsScreen->setWetMix(currentWetMix);
+  settingsScreen->setCompressorAttackMs(currentCompAttackMs);
+  settingsScreen->setCompressorReleaseMs(currentCompReleaseMs);
+  settingsScreen->setCompressorHoldMs(currentCompHoldMs);
+  settingsScreen->setCompressorThresholdPercent(currentCompThresholdPercent);
+  settingsScreen->setCompressorRatio(currentCompRatio);
 }
 
 static void releaseAllButtons() {
