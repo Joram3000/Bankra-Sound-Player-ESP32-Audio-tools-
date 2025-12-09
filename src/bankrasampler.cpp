@@ -12,6 +12,7 @@
 #include "config.h"
 #include "audio_mixer.h"
 #include "input.h"
+#include "settings_storage.h"
 
 // Audio stack
 AudioSourceSD source("/", "wav");
@@ -24,11 +25,28 @@ DryWetMixerStream* DryWetMixerStream::s_instance = nullptr;
 
 // Display & scope (moved to ui module)
 #include "ui.h"
+#include "SettingsScreenU8g2.h"
 
+// FreeRTOS semaphore helpers for safely drawing to the shared display
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "settings_storage.h"
 // State
 int activeButtonIndex = -1;
 String currentSamplePath = "";
-float currentFilterCutoffHz = MASTER_LOW_PASS_CUTOFF_HZ;
+float currentFilterCutoffHz = LOW_PASS_CUTOFF_HZ;
+float currentDelayTimeMs = 420.0f;
+float currentDelayDepth = 0.40f;
+float currentDelayFeedback = 0.45f;
+
+// Settings screen instance (created at runtime after display init)
+SettingsScreenU8g2* settingsScreen = nullptr;
+static SemaphoreHandle_t displayMutex = nullptr;
+
+enum class OperatingMode { Performance, Settings };
+static constexpr OperatingMode kStartupMode = OperatingMode::Performance; // Toggle to Settings to boot into settings mode.
+static OperatingMode operatingMode = kStartupMode;
+static OperatingMode lastOperatingMode = OperatingMode::Performance;
 
 // Switch state (pin 27, one side to GND -> use INPUT_PULLUP; LOW = ON)
 bool switchRawState = false;
@@ -40,11 +58,10 @@ bool filterSwitchRawState = false;
 bool filterSwitchDebouncedState = false;
 uint32_t filterSwitchLastDebounceTime = 0;
 
-// normalizeVolumeFromAdc moved into input.cpp (anonymous namespace). Remove
-// duplicate implementation here to avoid an unused symbol and potential ODR
-// confusion across translation units.
-
-// Button and VolumeManager moved to input.h / input.cpp
+// Settings mode switch (pin 35) state
+bool settingsModeRawState = false;
+bool settingsModeDebouncedState = false;
+uint32_t settingsModeLastDebounceTime = 0;
 
 Button buttons[BUTTON_COUNT] = {
   Button(BUTTON_PINS[0], "/1.wav", BUTTONS_ACTIVE_LOW),
@@ -60,9 +77,6 @@ VolumeManager volume(POT_PIN);
 
 // Audio/display init helpers
 void initSd() {
-  // Use configured pin constants from config.h so the constants are actually
-  // referenced and consistent with SD usage. Also initialize SPI with the
-  // chosen pins for clarity on ESP32.
   SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SD_CS_PIN);
   if (!SD.begin(SD_CS_PIN, SPI, 80000000UL)) {
     Serial.println("Card failed, or not present");
@@ -76,11 +90,12 @@ void initDisplay() {
   }
 }
 
+//check which parts and lines arent used anymore and delete them
 void initAudio() {
   auto cfg = scopeI2s.defaultConfig(TX_MODE);
-  cfg.pin_bck = 14;
-  cfg.pin_ws  = 15;
-  cfg.pin_data = 32;
+  cfg.pin_bck = 14; //needs to be moved to config.h
+  cfg.pin_ws  = 15; //needs to be moved to config.h
+  cfg.pin_data = 32; //needs to be moved to config.h
   scopeI2s.begin(cfg);
   mixerStream.begin(scopeI2s, delayEffect);
   uint32_t effectiveSampleRate = cfg.sample_rate > 0 ? cfg.sample_rate : 44100;
@@ -97,11 +112,10 @@ void initAudio() {
                                         MASTER_COMPRESSOR_THRESHOLD_PERCENT,
                                         MASTER_COMPRESSOR_RATIO,
                                         MASTER_COMPRESSOR_ENABLED);
-  delayEffect.setDuration(420);      // milliseconds
-  delayEffect.setDepth(0.40f);       // wet mix ratio handled in mixer
-  delayEffect.setFeedback(0.45f);    // repeats
+  delayEffect.setDuration(static_cast<uint32_t>(currentDelayTimeMs));      // milliseconds
+  delayEffect.setDepth(currentDelayDepth);       // wet mix ratio handled in mixer
+  delayEffect.setFeedback(currentDelayFeedback);    // repeats
   player.setOutput(mixerStream);
-  // player.setMetadataCallback(printMetaData);
   player.setSilenceOnInactive(true);
   player.setAutoNext(false);
   player.setDelayIfOutputFull(0);
@@ -112,7 +126,7 @@ void initAudio() {
 
 void applyFilterSwitchState(bool enabled) {
   mixerStream.configureMasterLowPass(currentFilterCutoffHz,
-                                     MASTER_LOW_PASS_Q, enabled);
+                                     LOW_PASS_Q, enabled);
 }
 
 // play helper
@@ -137,6 +151,96 @@ bool playSampleForButton(size_t idx) {
   return true;
 }
 
+static void initSettingsScreen() {
+  if (settingsScreen) return;
+  U8G2* display = getU8g2Display();
+  if (!display) {
+    Serial.println("Settings screen unavailable: no U8G2 display detected");
+    return;
+  }
+  settingsScreen = new SettingsScreenU8g2(*display);
+  settingsScreen->begin();
+  settingsScreen->setZoomCallback([](float zoomFactor) {
+    setScopeHorizZoom(zoomFactor);
+  });
+  settingsScreen->setDelayTimeCallback([](float durationMs) {
+    currentDelayTimeMs = durationMs;
+    delayEffect.setDuration(static_cast<uint32_t>(durationMs));
+  });
+  settingsScreen->setDelayDepthCallback([](float depth) {
+    currentDelayDepth = depth;
+    delayEffect.setDepth(depth);
+  });
+  settingsScreen->setDelayFeedbackCallback([](float feedback) {
+    currentDelayFeedback = feedback;
+    delayEffect.setFeedback(feedback);
+  });
+  settingsScreen->setFilterCutoffCallback([](float cutoffHz) {
+    currentFilterCutoffHz = cutoffHz;
+    applyFilterSwitchState(filterSwitchDebouncedState);
+  });
+
+  settingsScreen->setZoom(DEFAULT_HORIZ_ZOOM);
+  settingsScreen->setDelayTimeMs(currentDelayTimeMs);
+  settingsScreen->setDelayDepth(currentDelayDepth);
+  settingsScreen->setDelayFeedback(currentDelayFeedback);
+  settingsScreen->setFilterCutoffHz(currentFilterCutoffHz);
+}
+
+static void releaseAllButtons() {
+  activeButtonIndex = -1;
+  for (size_t i = 0; i < BUTTON_COUNT; ++i) {
+    buttons[i].release();
+  }
+}
+
+static void applyOperatingModeChange(OperatingMode newMode) {
+  if (newMode == OperatingMode::Settings && !settingsScreen) {
+    Serial.println("Settings mode requested but unavailable; reverting to performance mode");
+    operatingMode = OperatingMode::Performance;
+    newMode = OperatingMode::Performance;
+  }
+  if (newMode == lastOperatingMode) return;
+  if (newMode == OperatingMode::Settings) {
+    setScopeDisplaySuspended(true);
+    if (settingsScreen) settingsScreen->enter();
+    releaseAllButtons();
+  } else {
+    if (settingsScreen) settingsScreen->exit();
+    setScopeDisplaySuspended(false);
+    releaseAllButtons();
+  saveSettingsToSd(settingsScreen);
+  }
+  lastOperatingMode = newMode;
+}
+
+static void updateSettingsScreenUi() {
+  if (!settingsScreen) return;
+  if (displayMutex) {
+    if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      settingsScreen->update();
+      xSemaphoreGive(displayMutex);
+    }
+  } else {
+    settingsScreen->update();
+  }
+}
+
+static void handleSettingsButtonTrigger(size_t buttonIndex) {
+  if (!settingsScreen) return;
+  SettingsScreenU8g2::Button mapped;
+  switch (buttonIndex) {
+    case 0: mapped = SettingsScreenU8g2::BTN_RIGHT;     break; 
+    case 1: mapped = SettingsScreenU8g2::BTN_LEFT;      break;
+    case 2: mapped = SettingsScreenU8g2::BTN_DOWN;      break; 
+    case 3: mapped = SettingsScreenU8g2::BTN_BACK;      break; 
+    case 4: mapped = SettingsScreenU8g2::BTN_OK;        break;
+    case 5: mapped = SettingsScreenU8g2::BTN_UP;        break; 
+    default: return;
+  }
+  settingsScreen->onButton(mapped);
+}
+
 // Setup & loop (slim)
 void setup() {
   Serial.begin(115200);
@@ -153,9 +257,24 @@ void setup() {
   bool filterInit = (digitalRead(SWITCH_PIN_ENABLE_FILTER) == LOW);
   filterSwitchRawState = filterSwitchDebouncedState = filterInit;
 
+  pinMode(SWITCH_PIN_SETTINGS_MODE, INPUT_PULLUP);
+  bool settingsModeInit = (digitalRead(SWITCH_PIN_SETTINGS_MODE) == LOW);
+  settingsModeRawState = settingsModeDebouncedState = settingsModeInit;
+
   initSd();
   initDisplay();
+  if (auto mutexPtr = static_cast<SemaphoreHandle_t*>(getDisplayMutex())) {
+    displayMutex = *mutexPtr;
+  }
+
   initAudio();
+  initSettingsScreen();
+  loadSettingsFromSd(settingsScreen);
+  if (settingsScreen) {
+    setScopeHorizZoom(settingsScreen->getZoom());
+  }
+  applyOperatingModeChange(operatingMode);
+
   volume.begin();
   volume.setCutoffUpdateCallback([](float cutoffHz) {
     currentFilterCutoffHz = cutoffHz;
@@ -173,6 +292,7 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   volume.update(now);
+  applyOperatingModeChange(operatingMode);
 
   // Read switch (debounced) - pin wired to GND on one side; LOW = ON
   bool raw = (digitalRead(SWITCH_PIN_DELAY_SEND) == LOW);
@@ -199,36 +319,69 @@ void loop() {
     volume.forceImmediateSample();
   }
 
-  // buttons
+  // buttons: update first, then process triggers. This allows detecting
+  // multi-button combinations (e.g. all-pressed) before routing events.
+  bool triggered[BUTTON_COUNT] = {false};
   for (size_t i = 0; i < BUTTON_COUNT; ++i) {
-    if (buttons[i].update(now)) {
-      // trigger
-      if (playSampleForButton(i)) {
-        // nothing else here
-      }
-    } else {
-      // als knop is losgelaten en het was de actieve knop -> stop direct
-      if (!buttons[i].isLatched() && activeButtonIndex == (int)i) {
-        player.stop();                         // <-- stop playback bij loslaten
-        // don't clear delay buffer here; allow tail to decay and stay visible
-        buttons[i].release();
-        activeButtonIndex = -1;
-      }
-    }
+    triggered[i] = buttons[i].update(now);
   }
 
-  // Audio copy + housekeeping
+  // Handle settings mode switch (debounced)
+  bool settingsModeRaw = (digitalRead(SWITCH_PIN_SETTINGS_MODE) == LOW);
+    if (settingsModeRaw != settingsModeRawState) {
+      settingsModeLastDebounceTime = now;
+      settingsModeRawState = settingsModeRaw;
+    }
+    if ((now - settingsModeLastDebounceTime) > BUTTON_DEBOUNCE_MS && settingsModeRaw != settingsModeDebouncedState) {
+      settingsModeDebouncedState = settingsModeRaw;
+    }
+
+    bool modeToggled = false;
+    OperatingMode desiredMode = settingsModeDebouncedState
+                                  ? OperatingMode::Settings
+                                  : OperatingMode::Performance;
+    if (desiredMode != operatingMode) {
+      operatingMode = desiredMode;
+      applyOperatingModeChange(operatingMode);
+      modeToggled = true;
+    }
+
+    bool suppressButtonHandling = modeToggled;
+
+  if (!suppressButtonHandling) {
+    if (operatingMode == OperatingMode::Performance) {
+      for (size_t i = 0; i < BUTTON_COUNT; ++i) {
+        if (triggered[i]) {
+          if (playSampleForButton(i)) {
+            // trigger handled
+          }
+        }
+      }
+      for (size_t i = 0; i < BUTTON_COUNT; ++i) {
+        if (!buttons[i].isLatched() && activeButtonIndex == static_cast<int>(i)) {
+          player.stop();
+          buttons[i].release();
+          activeButtonIndex = -1;
+        }
+      }
+    } else {
+      for (size_t i = 0; i < BUTTON_COUNT; ++i) {
+        if (triggered[i]) {
+          handleSettingsButtonTrigger(i);
+        }
+      }
+      activeButtonIndex = -1;
+    }
+  } else if (operatingMode == OperatingMode::Settings) {
+    activeButtonIndex = -1;
+  }
+
   player.copy();
   // When player is inactive, pump a small amount of silence through the
   // mixer so delay/feedback buffers continue to advance and tails decay.
   if (!player.isActive()) {
-    // push 64 frames (tweak if needed)
     mixerStream.pumpSilenceFrames(64);
   }
-  // Als een sample klaar is: verbreek alleen de associatie met activeButtonIndex
-  // maar release de latched state niet automatisch. Daardoor blijft een ingedrukte
-  // knop latched en veroorzaakt geen her-trigger totdat je loslaat en opnieuw
-  // indrukt. Dit zorgt dat "ingedrukt houden" geen onverwachte herstarten geeft.
   if (!player.isActive() && activeButtonIndex >= 0) {
     // sample finished: release latched state so next press works cleanly
     buttons[activeButtonIndex].release();
@@ -236,6 +389,11 @@ void loop() {
   }
 
   // Update display state (handled by UI module)
-  bool currentPlayingState = player.isActive();
-  updateUi(currentPlayingState, currentSamplePath);
+  if (operatingMode == OperatingMode::Performance) {
+    bool currentPlayingState = player.isActive();
+    updateUi(currentPlayingState, currentSamplePath);
+  } else {
+    updateSettingsScreenUi();
+  }
+
 }
