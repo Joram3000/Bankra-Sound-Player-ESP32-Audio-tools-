@@ -8,14 +8,12 @@
 
 #include "config.h"
 
-/**
- * ScopeDisplayU8g2 - versie voor U8g2 drivers (bv. SSD1306 via U8g2)
- */
 class ScopeDisplayU8g2 {
   private:
     U8G2* display;
-    TaskHandle_t displayTaskHandle;
-    SemaphoreHandle_t displayMutex;
+  TaskHandle_t displayTaskHandle;
+  SemaphoreHandle_t displayMutex;
+  volatile bool suspended = false;
 
     int16_t* waveformBuffer;
     int* waveformIndex;
@@ -38,6 +36,10 @@ class ScopeDisplayU8g2 {
 
     void displayLoop() {
       for (;;) {
+        if (suspended) {
+          vTaskDelay(40 / portTICK_PERIOD_MS);
+          continue;
+        }
         if (xSemaphoreTake(displayMutex, portMAX_DELAY)) {
           display->clearBuffer();
           renderWaveform();
@@ -116,6 +118,17 @@ class ScopeDisplayU8g2 {
     }
 
   public:
+    // Allow external control of horizontal zoom and vertical scale so UI
+    // settings can affect the scope rendering.
+    void setHorizZoom(float hz) { horizZoom = hz; }
+    void setVertScale(float vs) { vertScale = vs; }
+    void setSuspended(bool value) {
+      suspended = value;
+      if (!value) {
+        lastDisplayY = NAN;
+      }
+    }
+
     ScopeDisplayU8g2(U8G2* disp, int16_t* waveBuffer, int* waveIdx)
       : ScopeDisplayU8g2(disp, waveBuffer, waveIdx, NUM_WAVEFORM_SAMPLES) {}
 
