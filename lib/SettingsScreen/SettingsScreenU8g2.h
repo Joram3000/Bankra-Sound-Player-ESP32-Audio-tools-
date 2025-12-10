@@ -57,15 +57,15 @@ public:
 	bool isActive() const { return active; }
 
 	void draw() {
-		if (!active) return;
-		unsigned long now = millis();
-		if (!dirty && (now - lastDrawMs) < 33) return;
-		lastDrawMs = now;
-		u8g2.clearBuffer();
-		drawMenu();
-		u8g2.sendBuffer();
-		dirty = false;
-	}
+        if (!active || !dirty) return;
+        unsigned long now = millis();
+        if ((now - lastDrawMs) < 33) return;
+        lastDrawMs = now;
+        u8g2.clearBuffer();
+        drawMenu();
+        u8g2.sendBuffer();
+        dirty = false;
+    }
 
 	void update() { draw(); }
 
@@ -319,7 +319,11 @@ private:
 				case ITEM_COMP_RELEASE: snprintf(valbuf, sizeof(valbuf), "%.0fms", compReleaseMs); break;
 				case ITEM_COMP_HOLD: snprintf(valbuf, sizeof(valbuf), "%.0fms", compHoldMs); break;
 				case ITEM_COMP_THRESHOLD: snprintf(valbuf, sizeof(valbuf), "%.0f%%", compThresholdPercent); break;
-				case ITEM_COMP_RATIO: snprintf(valbuf, sizeof(valbuf), "%.2f", compRatio); break;
+				case ITEM_COMP_RATIO: {
+					float displayRatio = (compRatio > 0.001f) ? (1.0f / compRatio) : 0.0f;
+					snprintf(valbuf, sizeof(valbuf), "1:%.1f", displayRatio);
+					break;
+				}
 			}
 			int vx = u8g2.getDisplayWidth() - (int)strlen(valbuf) * 6 - 4;
 			u8g2.drawStr(vx, baseline, valbuf);
