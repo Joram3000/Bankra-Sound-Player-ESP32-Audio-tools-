@@ -22,6 +22,7 @@ public:
 		ITEM_FILTER_SLEW,
 		ITEM_DRY_MIX,
 		ITEM_WET_MIX,
+		ITEM_COMP_ENABLED,
 		ITEM_COMP_ATTACK,
 		ITEM_COMP_RELEASE,
 		ITEM_COMP_HOLD,
@@ -47,6 +48,7 @@ public:
 	void setCompressorHoldCallback(std::function<void(float)> cb) { compHoldCallback = cb; }
 	void setCompressorThresholdCallback(std::function<void(float)> cb) { compThresholdCallback = cb; }
 	void setCompressorRatioCallback(std::function<void(float)> cb) { compRatioCallback = cb; }
+	void setCompressorEnabledCallback(std::function<void(bool)> cb) { compEnabledCallback = cb; }
 
 	void begin() {}
 
@@ -117,11 +119,13 @@ public:
 	float getFilterSlewHzPerSec() const { return filterSlewHzPerSec; }
 	float getDryMix() const { return dryMix; }
 	float getWetMix() const { return wetMix; }
+	bool isCompressorEnabled() const { return compEnabled; }
 	float getCompressorAttackMs() const { return compAttackMs; }
 	float getCompressorReleaseMs() const { return compReleaseMs; }
 	float getCompressorHoldMs() const { return compHoldMs; }
 	float getCompressorThresholdPercent() const { return compThresholdPercent; }
 	float getCompressorRatio() const { return compRatio; }
+	bool getCompressorEnabled() const { return compEnabled; }
 
 	void setDelayTimeMs(float ms) { delayTimeMs = clampValue(ms, DELAY_TIME_MIN_MS, DELAY_TIME_MAX_MS); markDirty(); notifyDelayTimeChanged(); }
 	void setDelayDepth(float d) { delayDepth = clampValue(d, DELAY_DEPTH_MIN, DELAY_DEPTH_MAX); markDirty(); notifyDelayDepthChanged(); }
@@ -131,12 +135,12 @@ public:
 	void setFilterSlewHzPerSec(float hz) { filterSlewHzPerSec = clampValue(hz, FILTER_SLEW_MIN_HZ_PER_SEC, FILTER_SLEW_MAX_HZ_PER_SEC); markDirty(); notifyFilterSlewChanged(); }
 	void setDryMix(float mix) { dryMix = clampValue(mix, MIXER_DRY_MIN, MIXER_DRY_MAX); markDirty(); notifyDryMixChanged(); }
 	void setWetMix(float mix) { wetMix = clampValue(mix, MIXER_WET_MIN, MIXER_WET_MAX); markDirty(); notifyWetMixChanged(); }
+	void setCompressorEnabled(bool enabled) { compEnabled = enabled; markDirty(); notifyCompressorEnabledChanged(); }
 	void setCompressorAttackMs(float ms) { compAttackMs = clampValue(ms, MASTER_COMPRESSOR_ATTACK_MIN_MS, MASTER_COMPRESSOR_ATTACK_MAX_MS); markDirty(); notifyCompressorAttackChanged(); }
 	void setCompressorReleaseMs(float ms) { compReleaseMs = clampValue(ms, MASTER_COMPRESSOR_RELEASE_MIN_MS, MASTER_COMPRESSOR_RELEASE_MAX_MS); markDirty(); notifyCompressorReleaseChanged(); }
 	void setCompressorHoldMs(float ms) { compHoldMs = clampValue(ms, MASTER_COMPRESSOR_HOLD_MIN_MS, MASTER_COMPRESSOR_HOLD_MAX_MS); markDirty(); notifyCompressorHoldChanged(); }
 	void setCompressorThresholdPercent(float pct) { compThresholdPercent = clampValue(pct, MASTER_COMPRESSOR_THRESHOLD_MIN, MASTER_COMPRESSOR_THRESHOLD_MAX); markDirty(); notifyCompressorThresholdChanged(); }
 	void setCompressorRatio(float ratio) { compRatio = clampValue(ratio, MASTER_COMPRESSOR_RATIO_MIN, MASTER_COMPRESSOR_RATIO_MAX); markDirty(); notifyCompressorRatioChanged(); }
-
 private:
 	U8G2 &u8g2;
 	bool active = false;
@@ -154,6 +158,7 @@ private:
 	float filterSlewHzPerSec = FILTER_SLEW_DEFAULT_HZ_PER_SEC;
 	float dryMix = MIXER_DEFAULT_DRY_LEVEL;
 	float wetMix = MIXER_DEFAULT_WET_LEVEL;
+	bool compEnabled = MASTER_COMPRESSOR_ENABLED;
 	float compAttackMs = MASTER_COMPRESSOR_ATTACK_MS;
 	float compReleaseMs = MASTER_COMPRESSOR_RELEASE_MS;
 	float compHoldMs = MASTER_COMPRESSOR_HOLD_MS;
@@ -174,6 +179,7 @@ private:
 	std::function<void(float)> compHoldCallback;
 	std::function<void(float)> compThresholdCallback;
 	std::function<void(float)> compRatioCallback;
+	std::function<void(bool)> compEnabledCallback;
 
 	void markDirty() { dirty = true; }
 
@@ -186,6 +192,7 @@ private:
 	void notifyFilterSlewChanged() { if (filterSlewCallback) filterSlewCallback(filterSlewHzPerSec); }
 	void notifyDryMixChanged() { if (dryMixCallback) dryMixCallback(dryMix); }
 	void notifyWetMixChanged() { if (wetMixCallback) wetMixCallback(wetMix); }
+	void notifyCompressorEnabledChanged() { if (compEnabledCallback) compEnabledCallback(compEnabled); }
 	void notifyCompressorAttackChanged() { if (compAttackCallback) compAttackCallback(compAttackMs); }
 	void notifyCompressorReleaseChanged() { if (compReleaseCallback) compReleaseCallback(compReleaseMs); }
 	void notifyCompressorHoldChanged() { if (compHoldCallback) compHoldCallback(compHoldMs); }
@@ -222,6 +229,13 @@ private:
 			case ITEM_WET_MIX:
 				applyAdjustment(wetMix, delta, MIXER_WET_MIN, MIXER_WET_MAX, MIXER_WET_STEP, coarseMult(MIXER_WET_STEP), [this]{ notifyWetMixChanged(); });
 				break;
+			case ITEM_COMP_ENABLED:
+				if (delta != 0) {
+					compEnabled = !compEnabled;
+					markDirty();
+					notifyCompressorEnabledChanged();
+				}
+				break;
 			case ITEM_COMP_ATTACK:
 				applyAdjustment(compAttackMs, delta, MASTER_COMPRESSOR_ATTACK_MIN_MS, MASTER_COMPRESSOR_ATTACK_MAX_MS, MASTER_COMPRESSOR_ATTACK_STEP_MS, coarseMult(MASTER_COMPRESSOR_ATTACK_STEP_MS), [this]{ notifyCompressorAttackChanged(); });
 				break;
@@ -237,6 +251,7 @@ private:
 			case ITEM_COMP_RATIO:
 				applyAdjustment(compRatio, delta, MASTER_COMPRESSOR_RATIO_MIN, MASTER_COMPRESSOR_RATIO_MAX, MASTER_COMPRESSOR_RATIO_STEP, coarseMult(MASTER_COMPRESSOR_RATIO_STEP), [this]{ notifyCompressorRatioChanged(); });
 				break;
+			
 		}
 	}
 
@@ -256,7 +271,7 @@ private:
 		u8g2.setFont(u8g2_font_6x12_tr);
 		static const char* const labels[ITEM_COUNT] = {
 			"Zoom","Delay ms","Delay depth","Delay fb","Filter Hz",
-			"Filter Q","Filter slew","Dry mix","Wet mix",
+			"Filter Q","Filter slew","Dry mix","Wet mix","Comp on",
 			"Comp atk","Comp rel","Comp hold","Comp thr","Comp ratio"
 		};
 		const int rowHeight = 10;
@@ -299,6 +314,7 @@ private:
 				case ITEM_FILTER_SLEW: snprintf(valbuf, sizeof(valbuf), "%.1fk/s", filterSlewHzPerSec / 1000.0f); break;
 				case ITEM_DRY_MIX: snprintf(valbuf, sizeof(valbuf), "%.2f", dryMix); break;
 				case ITEM_WET_MIX: snprintf(valbuf, sizeof(valbuf), "%.2f", wetMix); break;
+				case ITEM_COMP_ENABLED: snprintf(valbuf, sizeof(valbuf), "%s", compEnabled ? "On" : "Off"); break;
 				case ITEM_COMP_ATTACK: snprintf(valbuf, sizeof(valbuf), "%.0fms", compAttackMs); break;
 				case ITEM_COMP_RELEASE: snprintf(valbuf, sizeof(valbuf), "%.0fms", compReleaseMs); break;
 				case ITEM_COMP_HOLD: snprintf(valbuf, sizeof(valbuf), "%.0fms", compHoldMs); break;

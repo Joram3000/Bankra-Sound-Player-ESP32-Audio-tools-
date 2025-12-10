@@ -76,7 +76,14 @@ void loadSettingsFromSd(SettingsScreenU8g2* settingsScreen) {
 			float crat = line.substring(11).toFloat();
 			settingsScreen->setCompressorRatio(crat);
 			Serial.printf("Loaded comp_ratio=%.2f from settings\n", crat);
+		} else if (line.startsWith("comp_enabled=")) {
+			String ceStr = line.substring(13);
+			ceStr.toLowerCase();
+			bool ce = (ceStr == "1" || ceStr == "on" || ceStr == "true");
+			settingsScreen->setCompressorEnabled(ce);
+			Serial.printf("Loaded comp_enabled=%s from settings\n", ce ? "true" : "false");
 		}
+
 	}
 	f.close();
 }
@@ -118,6 +125,9 @@ void saveSettingsToSd(const SettingsScreenU8g2* settingsScreen) {
 		snprintf(buf2, sizeof(buf2), "comp_threshold=%.0f\n", settingsScreen->getCompressorThresholdPercent());
 		f.print(buf2);
 		snprintf(buf2, sizeof(buf2), "comp_ratio=%.2f\n", settingsScreen->getCompressorRatio());
+		f.print(buf2);
+		bool ce = settingsScreen->getCompressorEnabled();
+		snprintf(buf2, sizeof(buf2), "comp_enabled=%d\n", ce ? 1 : 0);
 		f.print(buf2);
 	}
 	f.flush();

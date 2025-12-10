@@ -42,6 +42,7 @@ float currentDelayDepth = DEFAULT_DELAY_DEPTH;
 float currentDelayFeedback = DEFAULT_DELAY_FEEDBACK;
 float currentDryMix = MIXER_DEFAULT_DRY_LEVEL;
 float currentWetMix = MIXER_DEFAULT_WET_LEVEL;
+bool currentCompEnabled = MASTER_COMPRESSOR_ENABLED;
 uint16_t currentCompAttackMs = MASTER_COMPRESSOR_ATTACK_MS;
 uint16_t currentCompReleaseMs = MASTER_COMPRESSOR_RELEASE_MS;
 uint16_t currentCompHoldMs = MASTER_COMPRESSOR_HOLD_MS;
@@ -120,7 +121,7 @@ void initAudio() {
                                         currentCompHoldMs,
                                         currentCompThresholdPercent,
                                         currentCompRatio,
-                                        MASTER_COMPRESSOR_ENABLED);
+                                        currentCompEnabled);
   mixerStream.setInputLowPassSlewRate(currentFilterSlewHzPerSec);
   delayEffect.setDuration(static_cast<uint32_t>(currentDelayTimeMs));      // milliseconds
   delayEffect.setDepth(currentDelayDepth);       // wet mix ratio handled in mixer
@@ -215,8 +216,12 @@ static void initSettingsScreen() {
                                           currentCompHoldMs,
                                           currentCompThresholdPercent,
                                           currentCompRatio,
-                                          MASTER_COMPRESSOR_ENABLED);
+                                          currentCompEnabled);
   };
+  settingsScreen->setCompressorEnabledCallback([rebuildCompressor](bool enabled) {
+    currentCompEnabled = enabled;
+    rebuildCompressor();
+  });
   settingsScreen->setCompressorAttackCallback([rebuildCompressor](float attackMs) {
     currentCompAttackMs = static_cast<uint16_t>(attackMs);
     rebuildCompressor();
@@ -247,6 +252,7 @@ static void initSettingsScreen() {
   settingsScreen->setFilterSlewHzPerSec(currentFilterSlewHzPerSec);
   settingsScreen->setDryMix(currentDryMix);
   settingsScreen->setWetMix(currentWetMix);
+  settingsScreen->setCompressorEnabled(currentCompEnabled);
   settingsScreen->setCompressorAttackMs(currentCompAttackMs);
   settingsScreen->setCompressorReleaseMs(currentCompReleaseMs);
   settingsScreen->setCompressorHoldMs(currentCompHoldMs);
