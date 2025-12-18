@@ -4,17 +4,73 @@
 #include <AudioTools.h>
 #include "config.h"
 
+namespace {
+class Sn74hc151Mux {
+public:
+  void begin();
+  int readChannel(uint8_t channel);
+
+private:
+  void selectChannel(uint8_t channel);
+  bool initialized = false;
+  uint8_t lastChannel = 0xFF;
+};
+
+Sn74hc151Mux gInputMux;
+
+void Sn74hc151Mux::begin() {
+  if (initialized) return;
+  pinMode(INPUT_MUX_PIN_A, OUTPUT);
+  pinMode(INPUT_MUX_PIN_B, OUTPUT);
+  pinMode(INPUT_MUX_PIN_C, OUTPUT);
+  if (INPUT_MUX_PIN_EN >= 0) {
+    pinMode(INPUT_MUX_PIN_EN, OUTPUT);
+    digitalWrite(INPUT_MUX_PIN_EN, LOW);
+  }
+  pinMode(INPUT_MUX_PIN_Y, INPUT);
+  selectChannel(0);
+  initialized = true;
+}
+
+void Sn74hc151Mux::selectChannel(uint8_t channel) {
+  channel &= 0x07;
+  if (channel == lastChannel) return;
+  digitalWrite(INPUT_MUX_PIN_A, channel & 0x01);
+  digitalWrite(INPUT_MUX_PIN_B, (channel >> 1) & 0x01);
+  digitalWrite(INPUT_MUX_PIN_C, (channel >> 2) & 0x01);
+  lastChannel = channel;
+}
+
+int Sn74hc151Mux::readChannel(uint8_t channel) {
+  if (!initialized) begin();
+  selectChannel(channel);
+  delayMicroseconds(INPUT_MUX_SETTLE_TIME_US);
+  return digitalRead(INPUT_MUX_PIN_Y);
+}
+} // namespace
+
+void initInputMux() {
+  gInputMux.begin();
+}
+
+bool readMuxActiveState(uint8_t channel, bool activeLow) {
+  int level = gInputMux.readChannel(channel);
+  return activeLow ? (level == LOW) : (level == HIGH);
+}
+
 // Implementations for Button
-Button::Button(int pin, const char* samplePath, bool activeLow)
-  : pin(pin), samplePath(samplePath), activeLow(activeLow) {}
+Button::Button(int pinOrChannel, const char* samplePath, bool activeLow, bool useMultiplexer)
+  : pin(pinOrChannel), samplePath(samplePath), activeLow(activeLow), useMultiplexer(useMultiplexer) {}
 
 void Button::begin() {
-  // Configure internal pull resistor depending on activeLow.
-  // - activeLow == true: pressed == LOW, enable INPUT_PULLUP
-  // - activeLow == false: pressed == HIGH, enable INPUT_PULLDOWN (ESP32)
-  #if defined(INPUT_PULLDOWN)
-    pinMode(pin, activeLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-  #endif
+  if (!useMultiplexer) {
+    // Configure internal pull resistor depending on activeLow.
+    // - activeLow == true: pressed == LOW, enable INPUT_PULLUP
+    // - activeLow == false: pressed == HIGH, enable INPUT_PULLDOWN (ESP32)
+    #if defined(INPUT_PULLDOWN)
+      pinMode(pin, activeLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    #endif
+  }
   rawState = false;
   debouncedState = false;
   lastDebounceTime = 0;
@@ -23,7 +79,7 @@ void Button::begin() {
 }
 
 bool Button::update(uint32_t now) {
-  bool raw = activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+  bool raw = readPressedHardware();
   if (raw != rawState) {
     lastDebounceTime = now;
     rawState = raw;
@@ -31,9 +87,13 @@ bool Button::update(uint32_t now) {
   if ((now - lastDebounceTime) > BUTTON_DEBOUNCE_MS && raw != debouncedState) {
     debouncedState = raw;
     if (debouncedState) {
-      if (!latched && (now - lastTriggerTime) > BUTTON_RETRIGGER_GUARD_MS) {
+     if (!latched && (now - lastTriggerTime) > BUTTON_RETRIGGER_GUARD_MS) {
         lastTriggerTime = now;
         latched = true;
+        if (Serial) {
+          Serial.print(F("Button pressed: "));
+          Serial.println(samplePath ? samplePath : "<unnamed>");
+        }
         return true;
       }
     } else {
@@ -46,7 +106,7 @@ bool Button::update(uint32_t now) {
 void Button::release() { latched = false; lastTriggerTime = 0; }
 
 void Button::sync(uint32_t now) {
-  bool raw = activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+  bool raw = readPressedHardware();
   rawState = raw;
   debouncedState = raw;
   latched = raw;
@@ -55,10 +115,18 @@ void Button::sync(uint32_t now) {
 }
 
 bool Button::readRaw() const {
-  return activeLow ? (digitalRead(pin) == LOW) : (digitalRead(pin) == HIGH);
+  return readPressedHardware();
 }
 bool Button::isLatched() const { return latched; }
 const char* Button::getPath() const { return samplePath; }
+
+bool Button::readPressedHardware() const {
+  if (useMultiplexer) {
+    return readMuxActiveState(static_cast<uint8_t>(pin), activeLow);
+  }
+  int level = digitalRead(pin);
+  return activeLow ? (level == LOW) : (level == HIGH);
+}
 
 // VolumeManager implementations
 VolumeManager::VolumeManager(int adcPin)
@@ -69,8 +137,11 @@ extern AudioPlayer player; // defined in bankrasampler.cpp
 namespace {
 float normalizeVolumeFromAdc(int raw) {
   const float adcMax = 4095.0f;
-  float v = 1.0f - (static_cast<float>(raw) / adcMax);
-  return constrain(v, 0.0f, 1.0f);
+  float normalized = static_cast<float>(raw) / adcMax;
+  if (POT_POLARITY_INVERTED) {
+    normalized = 1.0f - normalized;
+  }
+  return constrain(normalized, 0.0f, 1.0f);
 }
 }
 

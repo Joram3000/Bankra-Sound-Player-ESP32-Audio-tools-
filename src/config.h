@@ -8,8 +8,8 @@
 // -----------------------------------------------------------------------------
 // Display selection & geometry
 // -----------------------------------------------------------------------------
-#define DISPLAY_DRIVER_ADAFRUIT_SSD1306 0
-#define DISPLAY_DRIVER_U8G2_SSD1306     1
+#define DISPLAY_DRIVER_ADAFRUIT_SSD1306 1
+#define DISPLAY_DRIVER_U8G2_SSD1306     0
 
 // Pick which display backend to compile (see ui.cpp for usage)
 #define DISPLAY_DRIVER DISPLAY_DRIVER_U8G2_SSD1306
@@ -33,20 +33,31 @@ constexpr bool DISPLAY_INVERT_COLORS = false;
 #endif
 
 // -----------------------------------------------------------------------------
-// User controls
+// User controls (buttons + SN74HC151 multiplexer)
 // -----------------------------------------------------------------------------
-constexpr std::array<int, 6> BUTTON_PINS = {13, 4, 16, 17, 12, 25};
-constexpr size_t BUTTON_COUNT = BUTTON_PINS.size();
+constexpr std::array<uint8_t, 6> BUTTON_CHANNELS = { 4,5,6, 3, 2, 1};
+constexpr size_t BUTTON_COUNT = BUTTON_CHANNELS.size();
 constexpr bool BUTTONS_ACTIVE_LOW = true;
-constexpr int SWITCH_PIN_DELAY_SEND = 27;
-constexpr int SWITCH_PIN_ENABLE_FILTER = 26;
-constexpr int SWITCH_PIN_SETTINGS_MODE = 35; // new pin for entering settings mode on boot
+
+// SN74HC151 select pins (A = LSB) and shared output
+constexpr int INPUT_MUX_PIN_A = 13;
+constexpr int INPUT_MUX_PIN_B = 4;
+constexpr int INPUT_MUX_PIN_C = 16;
+constexpr int INPUT_MUX_PIN_Y = 17;
+constexpr int INPUT_MUX_PIN_EN = -1; // tie to GND on PCB if < 0
+constexpr uint8_t INPUT_MUX_SETTLE_TIME_US = 5;
+
+// Channel mapping for non-sampler controls routed through the mux
+constexpr uint8_t SWITCH_CHANNEL_DELAY_SEND = 7;
+constexpr uint8_t SWITCH_CHANNEL_FILTER_ENABLE = 0;
+constexpr int SWITCH_PIN_SETTINGS_MODE = 35; // dedicated pin (not muxed)
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
  constexpr uint32_t BUTTON_FADE_MS = 12;
 constexpr uint32_t EFFECT_TOGGLE_FADE_MS = 6;
 constexpr uint32_t SAMPLE_ATTACK_FADE_MS = 10;
 constexpr int POT_PIN = 34;
+constexpr bool POT_POLARITY_INVERTED = false;
 constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
 constexpr float VOLUME_DEADBAND = 0.12f;
 
@@ -141,6 +152,7 @@ constexpr int SD_CS_PIN    = 5;  // already in use by SD
 constexpr int SPI_MOSI_PIN = 23; // MOSI (shared)
 constexpr int SPI_SCK_PIN  = 18; // SCLK (shared)
 constexpr int SPI_MISO_PIN = 19; // MISO (shared)
+
 constexpr int I2S_PIN_BCK  = 14;
 constexpr int I2S_PIN_WS   = 15;
 constexpr int I2S_PIN_DATA = 32;

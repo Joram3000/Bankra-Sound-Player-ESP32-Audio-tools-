@@ -223,8 +223,8 @@ private:
   float compRatio = MASTER_COMPRESSOR_RATIO;
 
   // debug counters
-  uint32_t debugFrameCounter = 0;
-  const uint32_t debugFrameInterval = 100; // print every N frames
+  // uint32_t debugFrameCounter = 0;
+  // const uint32_t debugFrameInterval = 100; // print every N frames
   // ModifyingStream targets
   Stream* p_in = nullptr;
   Print* p_out = nullptr;

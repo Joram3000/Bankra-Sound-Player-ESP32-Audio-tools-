@@ -5,9 +5,12 @@
 #include <functional>
 #include "AudioTools/CoreAudio/VolumeControl.h"
 
+void initInputMux();
+bool readMuxActiveState(uint8_t channel, bool activeLow = true);
+
 class Button {
 public:
-  Button(int pin, const char* samplePath, bool activeLow = true);
+  Button(int pinOrChannel, const char* samplePath, bool activeLow = true, bool useMultiplexer = false);
   void begin();
   bool update(uint32_t now);
   void release();
@@ -23,8 +26,10 @@ private:
   bool rawState = false;
   bool debouncedState = false;
   bool latched = false;
+  bool useMultiplexer = false;
   uint32_t lastDebounceTime = 0;
   uint32_t lastTriggerTime = 0;
+  bool readPressedHardware() const;
 };
 
 class VolumeManager {

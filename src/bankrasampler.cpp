@@ -74,12 +74,12 @@ bool settingsModeDebouncedState = false;
 uint32_t settingsModeLastDebounceTime = 0;
 
 Button buttons[BUTTON_COUNT] = {
-  Button(BUTTON_PINS[0], "/1.wav", BUTTONS_ACTIVE_LOW),
-  Button(BUTTON_PINS[1], "/2.wav", BUTTONS_ACTIVE_LOW),
-  Button(BUTTON_PINS[2], "/3.wav", BUTTONS_ACTIVE_LOW),
-  Button(BUTTON_PINS[3], "/4.wav", BUTTONS_ACTIVE_LOW),
-  Button(BUTTON_PINS[4], "/5.wav", BUTTONS_ACTIVE_LOW),
-  Button(BUTTON_PINS[5], "/6.wav", BUTTONS_ACTIVE_LOW),
+  Button(BUTTON_CHANNELS[0], "/1.wav", BUTTONS_ACTIVE_LOW, true),
+  Button(BUTTON_CHANNELS[1], "/2.wav", BUTTONS_ACTIVE_LOW, true),
+  Button(BUTTON_CHANNELS[2], "/3.wav", BUTTONS_ACTIVE_LOW, true),
+  Button(BUTTON_CHANNELS[3], "/4.wav", BUTTONS_ACTIVE_LOW, true),
+  Button(BUTTON_CHANNELS[4], "/5.wav", BUTTONS_ACTIVE_LOW, true),
+  Button(BUTTON_CHANNELS[5], "/6.wav", BUTTONS_ACTIVE_LOW, true),
 };
 
 VolumeManager volume(POT_PIN);
@@ -299,16 +299,17 @@ static void updateSettingsScreenUi() {
   }
 }
 
+// thhis is where the buttons are mapped to settings screen actions
 static void handleSettingsButtonTrigger(size_t buttonIndex) {
   if (!settingsScreen) return;
   SettingsScreenU8g2::Button mapped;
   switch (buttonIndex) {
-    case 0: mapped = SettingsScreenU8g2::BTN_RIGHT;     break; 
-    case 1: mapped = SettingsScreenU8g2::BTN_LEFT;      break;
-    case 2: mapped = SettingsScreenU8g2::BTN_DOWN;      break; 
-    case 3: mapped = SettingsScreenU8g2::BTN_BACK;      break; 
-    case 4: mapped = SettingsScreenU8g2::BTN_OK;        break;
-    case 5: mapped = SettingsScreenU8g2::BTN_UP;        break; 
+    case 0: mapped = SettingsScreenU8g2::BTN_BACK;     break; 
+    case 1: mapped = SettingsScreenU8g2::BTN_UP;      break;
+    case 2: mapped = SettingsScreenU8g2::BTN_OK;      break; 
+    case 3: mapped = SettingsScreenU8g2::BTN_LEFT;      break; 
+    case 4: mapped = SettingsScreenU8g2::BTN_DOWN;        break;
+    case 5: mapped = SettingsScreenU8g2::BTN_RIGHT;        break; 
     default: return;
   }
   settingsScreen->onButton(mapped);
@@ -319,15 +320,14 @@ void setup() {
   Serial.begin(115200);
   AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
 
+  initInputMux();
   for (size_t i = 0; i < BUTTON_COUNT; ++i) buttons[i].begin();
 
   // init switch pin
-  pinMode(SWITCH_PIN_DELAY_SEND, INPUT_PULLUP);
-  bool init = (digitalRead(SWITCH_PIN_DELAY_SEND) == LOW);
+  bool init = readMuxActiveState(SWITCH_CHANNEL_DELAY_SEND, true);
   switchRawState = switchDebouncedState = init;
 
-  pinMode(SWITCH_PIN_ENABLE_FILTER, INPUT_PULLUP);
-  bool filterInit = (digitalRead(SWITCH_PIN_ENABLE_FILTER) == LOW);
+  bool filterInit = readMuxActiveState(SWITCH_CHANNEL_FILTER_ENABLE, true);
   filterSwitchRawState = filterSwitchDebouncedState = filterInit;
 
   pinMode(SWITCH_PIN_SETTINGS_MODE, INPUT_PULLUP);
@@ -368,7 +368,7 @@ void loop() {
   applyOperatingModeChange(operatingMode);
 
   // Read switch (debounced) - pin wired to GND on one side; LOW = ON
-  bool raw = (digitalRead(SWITCH_PIN_DELAY_SEND) == LOW);
+  bool raw = readMuxActiveState(SWITCH_CHANNEL_DELAY_SEND, true);
   if (raw != switchRawState) {
     switchLastDebounceTime = now;
     switchRawState = raw;
@@ -379,7 +379,7 @@ void loop() {
     mixerStream.setSendActive(switchDebouncedState);
   }
 
-  bool filterRaw = (digitalRead(SWITCH_PIN_ENABLE_FILTER) == LOW);
+  bool filterRaw = readMuxActiveState(SWITCH_CHANNEL_FILTER_ENABLE, true);
   if (filterRaw != filterSwitchRawState) {
     filterSwitchLastDebounceTime = now;
     filterSwitchRawState = filterRaw;

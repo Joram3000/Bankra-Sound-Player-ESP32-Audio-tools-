@@ -10,7 +10,7 @@
 
 class SettingsScreenU8g2 {
 public:
-	enum Button : uint8_t { BTN_UP = 0, BTN_DOWN = 1, BTN_LEFT = 2, BTN_RIGHT = 3, BTN_OK = 4, BTN_BACK = 5 };
+	enum Button : uint8_t { BTN_BACK = 0, BTN_UP = 1, BTN_OK = 2, BTN_LEFT = 3, BTN_DOWN = 4, BTN_RIGHT = 5 };
 
 	enum Item : uint8_t {
 		ITEM_ZOOM = 0,
