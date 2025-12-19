@@ -25,7 +25,13 @@ DryWetMixerStream* DryWetMixerStream::s_instance = nullptr;
 
 // Display & scope (moved to ui module)
 #include "ui.h"
+#include "SettingsScreen.h"
+
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_ADAFRUIT_SSD1306
+#include "SettingsScreenAdafruit.h"
+#elif DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
 #include "SettingsScreenU8g2.h"
+#endif
 
 // FreeRTOS semaphore helpers for safely drawing to the shared display
 #include "freertos/FreeRTOS.h"
@@ -50,7 +56,7 @@ uint8_t currentCompThresholdPercent = MASTER_COMPRESSOR_THRESHOLD_PERCENT;
 float currentCompRatio = MASTER_COMPRESSOR_RATIO;
 
 // Settings screen instance (created at runtime after display init)
-SettingsScreenU8g2* settingsScreen = nullptr;
+ISettingsScreen* settingsScreen = nullptr;
 static SemaphoreHandle_t displayMutex = nullptr;
 
 enum class OperatingMode { Performance, Settings };
@@ -165,12 +171,23 @@ bool playSampleForButton(size_t idx) {
 
 static void initSettingsScreen() {
   if (settingsScreen) return;
-  U8G2* display = getU8g2Display();
-  if (!display) {
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+  if (auto* display = getU8g2Display()) {
+    settingsScreen = new SettingsScreenU8g2(*display);
+  } else {
     Serial.println("Settings screen unavailable: no U8G2 display detected");
     return;
   }
-  settingsScreen = new SettingsScreenU8g2(*display);
+#elif DISPLAY_DRIVER == DISPLAY_DRIVER_ADAFRUIT_SSD1306
+  if (auto* display = getAdafruitDisplay()) {
+    settingsScreen = new SettingsScreenAdafruit(*display);
+  } else {
+    Serial.println("Settings screen unavailable: no Adafruit SSD1306 display detected");
+    return;
+  }
+#else
+  return;
+#endif
   settingsScreen->begin();
   settingsScreen->setZoomCallback([](float zoomFactor) {
     setScopeHorizZoom(zoomFactor);
@@ -302,14 +319,14 @@ static void updateSettingsScreenUi() {
 // thhis is where the buttons are mapped to settings screen actions
 static void handleSettingsButtonTrigger(size_t buttonIndex) {
   if (!settingsScreen) return;
-  SettingsScreenU8g2::Button mapped;
+  ISettingsScreen::Button mapped;
   switch (buttonIndex) {
-    case 0: mapped = SettingsScreenU8g2::BTN_BACK;     break; 
-    case 1: mapped = SettingsScreenU8g2::BTN_UP;      break;
-    case 2: mapped = SettingsScreenU8g2::BTN_OK;      break; 
-    case 3: mapped = SettingsScreenU8g2::BTN_LEFT;      break; 
-    case 4: mapped = SettingsScreenU8g2::BTN_DOWN;        break;
-    case 5: mapped = SettingsScreenU8g2::BTN_RIGHT;        break; 
+    case 0: mapped = ISettingsScreen::Button::Back;     break; 
+    case 1: mapped = ISettingsScreen::Button::Up;      break;
+    case 2: mapped = ISettingsScreen::Button::Ok;      break; 
+    case 3: mapped = ISettingsScreen::Button::Left;      break; 
+    case 4: mapped = ISettingsScreen::Button::Down;        break;
+    case 5: mapped = ISettingsScreen::Button::Right;        break; 
     default: return;
   }
   settingsScreen->onButton(mapped);

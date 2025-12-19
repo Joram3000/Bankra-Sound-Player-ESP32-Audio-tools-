@@ -9,18 +9,23 @@
   #include <Adafruit_GFX.h>
   #include <Adafruit_SSD1306.h>
   #include <ScopeDisplay.h>
-  
-#elif DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
-  #include <U8g2lib.h>
-  #include <ScopeDisplayU8g2.h>
+#else
+  class Adafruit_SSD1306;
+#endif
+
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
+#include <U8g2lib.h>
+#include <ScopeDisplayU8g2.h>
 #ifndef DISPLAY_U8G2_CLASS
   #define DISPLAY_U8G2_CLASS U8G2_SSD1306_128X64_NONAME_F_HW_I2C
 #endif
 #ifndef DISPLAY_U8G2_CTOR_ARGS
   #define DISPLAY_U8G2_CTOR_ARGS U8G2_R0, U8X8_PIN_NONE
 #endif
-#else
-  #error "Unsupported DISPLAY_DRIVER selection"
+#endif
+
+#if DISPLAY_DRIVER != DISPLAY_DRIVER_ADAFRUIT_SSD1306 && DISPLAY_DRIVER != DISPLAY_DRIVER_U8G2_SSD1306
+#error "Unsupported DISPLAY_DRIVER selection"
 #endif
 
 static int16_t waveformBuffer[NUM_WAVEFORM_SAMPLES];
@@ -69,26 +74,22 @@ U8G2* getU8g2Display() {
 #endif
 }
 
-void* getDisplayMutex() {
-#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
-  return scopeDisplay.getMutex();
+Adafruit_SSD1306* getAdafruitDisplay() {
+#if DISPLAY_DRIVER == DISPLAY_DRIVER_ADAFRUIT_SSD1306
+  return &display;
 #else
   return nullptr;
 #endif
 }
 
+void* getDisplayMutex() {
+  return scopeDisplay.getMutex();
+}
+
 void setScopeHorizZoom(float z) {
-#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
   scopeDisplay.setHorizZoom(z);
-#else
-  (void)z;
-#endif
 }
 
 void setScopeDisplaySuspended(bool suspended) {
-#if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
   scopeDisplay.setSuspended(suspended);
-#else
-  scopeDisplay.setSuspended(suspended);
-#endif
 }

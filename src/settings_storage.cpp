@@ -3,13 +3,13 @@
 #include <Arduino.h>
 #include <SD.h>
 
-#include "SettingsScreenU8g2.h"
+#include "SettingsScreen.h"
 
 namespace {
 constexpr const char* kSettingsPath = "/settings.txt";
 }
 
-void loadSettingsFromSd(SettingsScreenU8g2* settingsScreen) {
+void loadSettingsFromSd(ISettingsScreen* settingsScreen) {
 	if (!settingsScreen) return;
 	if (!SD.exists(kSettingsPath)) return;
 	File f = SD.open(kSettingsPath, FILE_READ);
@@ -88,7 +88,7 @@ void loadSettingsFromSd(SettingsScreenU8g2* settingsScreen) {
 	f.close();
 }
 
-void saveSettingsToSd(const SettingsScreenU8g2* settingsScreen) {
+void saveSettingsToSd(const ISettingsScreen* settingsScreen) {
 	File f = SD.open(kSettingsPath, FILE_WRITE);
 	if (!f) {
 		Serial.println("Failed to open settings file for write");

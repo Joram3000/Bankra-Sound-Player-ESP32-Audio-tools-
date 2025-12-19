@@ -7,10 +7,11 @@
 #include <functional>
 
 #include "config.h"
+#include "SettingsScreen.h"
 
-class SettingsScreenU8g2 {
+class SettingsScreenU8g2 : public ISettingsScreen {
 public:
-	enum Button : uint8_t { BTN_BACK = 0, BTN_UP = 1, BTN_OK = 2, BTN_LEFT = 3, BTN_DOWN = 4, BTN_RIGHT = 5 };
+    using Button = ISettingsScreen::Button;
 
 	enum Item : uint8_t {
 		ITEM_ZOOM = 0,
@@ -34,27 +35,27 @@ public:
 	explicit SettingsScreenU8g2(U8G2 &display)
 		: u8g2(display) {}
 
-	void setZoomCallback(std::function<void(float)> cb) { zoomCallback = cb; }
-	void setFilterCutoffCallback(std::function<void(float)> cb) { filterCutoffCallback = cb; }
-	void setFilterQCallback(std::function<void(float)> cb) { filterQCallback = cb; }
-	void setFilterSlewCallback(std::function<void(float)> cb) { filterSlewCallback = cb; }
-	void setDelayTimeCallback(std::function<void(float)> cb) { delayTimeCallback = cb; }
-	void setDelayDepthCallback(std::function<void(float)> cb) { delayDepthCallback = cb; }
-	void setDelayFeedbackCallback(std::function<void(float)> cb) { delayFeedbackCallback = cb; }
-	void setDryMixCallback(std::function<void(float)> cb) { dryMixCallback = cb; }
-	void setWetMixCallback(std::function<void(float)> cb) { wetMixCallback = cb; }
-	void setCompressorAttackCallback(std::function<void(float)> cb) { compAttackCallback = cb; }
-	void setCompressorReleaseCallback(std::function<void(float)> cb) { compReleaseCallback = cb; }
-	void setCompressorHoldCallback(std::function<void(float)> cb) { compHoldCallback = cb; }
-	void setCompressorThresholdCallback(std::function<void(float)> cb) { compThresholdCallback = cb; }
-	void setCompressorRatioCallback(std::function<void(float)> cb) { compRatioCallback = cb; }
-	void setCompressorEnabledCallback(std::function<void(bool)> cb) { compEnabledCallback = cb; }
+	void setZoomCallback(std::function<void(float)> cb) override { zoomCallback = cb; }
+	void setFilterCutoffCallback(std::function<void(float)> cb) override { filterCutoffCallback = cb; }
+	void setFilterQCallback(std::function<void(float)> cb) override { filterQCallback = cb; }
+	void setFilterSlewCallback(std::function<void(float)> cb) override { filterSlewCallback = cb; }
+	void setDelayTimeCallback(std::function<void(float)> cb) override { delayTimeCallback = cb; }
+	void setDelayDepthCallback(std::function<void(float)> cb) override { delayDepthCallback = cb; }
+	void setDelayFeedbackCallback(std::function<void(float)> cb) override { delayFeedbackCallback = cb; }
+	void setDryMixCallback(std::function<void(float)> cb) override { dryMixCallback = cb; }
+	void setWetMixCallback(std::function<void(float)> cb) override { wetMixCallback = cb; }
+	void setCompressorAttackCallback(std::function<void(float)> cb) override { compAttackCallback = cb; }
+	void setCompressorReleaseCallback(std::function<void(float)> cb) override { compReleaseCallback = cb; }
+	void setCompressorHoldCallback(std::function<void(float)> cb) override { compHoldCallback = cb; }
+	void setCompressorThresholdCallback(std::function<void(float)> cb) override { compThresholdCallback = cb; }
+	void setCompressorRatioCallback(std::function<void(float)> cb) override { compRatioCallback = cb; }
+	void setCompressorEnabledCallback(std::function<void(bool)> cb) override { compEnabledCallback = cb; }
 
-	void begin() {}
+	void begin() override {}
 
-	void enter() { active = true; markDirty(); }
-	void exit()  { active = false; }
-	bool isActive() const { return active; }
+	void enter() override { active = true; markDirty(); }
+	void exit() override  { active = false; }
+	bool isActive() const override { return active; }
 
 	void draw() {
         if (!active || !dirty) return;
@@ -67,22 +68,22 @@ public:
         dirty = false;
     }
 
-	void update() { draw(); }
+	void update() override { draw(); }
 
-	bool onButton(Button b) {
+	bool onButton(Button b) override {
 		if (!active) return false;
 		switch(b) {
-			case BTN_OK:
+			case Button::Ok:
 				editing = !editing;
 				markDirty();
 				return true;
-			case BTN_BACK:
+			case Button::Back:
 				if (editing) {
 					editing = false;
 					markDirty();
 				}
 				return true;
-			case BTN_UP:
+			case Button::Up:
 				if (editing) {
 					adjustCurrentItem(+1);
 				} else {
@@ -90,7 +91,7 @@ public:
 					markDirty();
 				}
 				return true;
-			case BTN_DOWN:
+			case Button::Down:
 				if (editing) {
 					adjustCurrentItem(-1);
 				} else {
@@ -98,49 +99,48 @@ public:
 					markDirty();
 				}
 				return true;
-			case BTN_LEFT:
+			case Button::Left:
 				if (editing) adjustCurrentItem(-10);
 				return true;
-			case BTN_RIGHT:
+			case Button::Right:
 				if (editing) adjustCurrentItem(+10);
 				return true;
 		}
 		return false;
 	}
 
-	float getZoom() const { return zoom; }
-	void setZoom(float z) { zoom = clampValue(z, ZOOM_MIN, ZOOM_MAX); markDirty(); notifyZoomChanged(); }
+	float getZoom() const override { return zoom; }
+	void setZoom(float z) override { zoom = clampValue(z, ZOOM_MIN, ZOOM_MAX); markDirty(); notifyZoomChanged(); }
 
-	float getDelayTimeMs() const { return delayTimeMs; }
-	float getDelayDepth() const { return delayDepth; }
-	float getDelayFeedback() const { return delayFeedback; }
-	float getFilterCutoffHz() const { return filterCutoffHz; }
-	float getFilterQ() const { return filterQ; }
-	float getFilterSlewHzPerSec() const { return filterSlewHzPerSec; }
-	float getDryMix() const { return dryMix; }
-	float getWetMix() const { return wetMix; }
-	bool isCompressorEnabled() const { return compEnabled; }
-	float getCompressorAttackMs() const { return compAttackMs; }
-	float getCompressorReleaseMs() const { return compReleaseMs; }
-	float getCompressorHoldMs() const { return compHoldMs; }
-	float getCompressorThresholdPercent() const { return compThresholdPercent; }
-	float getCompressorRatio() const { return compRatio; }
-	bool getCompressorEnabled() const { return compEnabled; }
+	float getDelayTimeMs() const override { return delayTimeMs; }
+	float getDelayDepth() const override { return delayDepth; }
+	float getDelayFeedback() const override { return delayFeedback; }
+	float getFilterCutoffHz() const override { return filterCutoffHz; }
+	float getFilterQ() const override { return filterQ; }
+	float getFilterSlewHzPerSec() const override { return filterSlewHzPerSec; }
+	float getDryMix() const override { return dryMix; }
+	float getWetMix() const override { return wetMix; }
+	bool getCompressorEnabled() const override { return compEnabled; }
+	float getCompressorAttackMs() const override { return compAttackMs; }
+	float getCompressorReleaseMs() const override { return compReleaseMs; }
+	float getCompressorHoldMs() const override { return compHoldMs; }
+	float getCompressorThresholdPercent() const override { return compThresholdPercent; }
+	float getCompressorRatio() const override { return compRatio; }
 
-	void setDelayTimeMs(float ms) { delayTimeMs = clampValue(ms, DELAY_TIME_MIN_MS, DELAY_TIME_MAX_MS); markDirty(); notifyDelayTimeChanged(); }
-	void setDelayDepth(float d) { delayDepth = clampValue(d, DELAY_DEPTH_MIN, DELAY_DEPTH_MAX); markDirty(); notifyDelayDepthChanged(); }
-	void setDelayFeedback(float fb) { delayFeedback = clampValue(fb, DELAY_FEEDBACK_MIN, DELAY_FEEDBACK_MAX); markDirty(); notifyDelayFeedbackChanged(); }
-	void setFilterCutoffHz(float hz) { filterCutoffHz = clampValue(hz, LOW_PASS_MIN_HZ, LOW_PASS_MAX_HZ); markDirty(); notifyFilterCutoffChanged(); }
-	void setFilterQ(float q) { filterQ = clampValue(q, LOW_PASS_Q_MIN, LOW_PASS_Q_MAX); markDirty(); notifyFilterQChanged(); }
-	void setFilterSlewHzPerSec(float hz) { filterSlewHzPerSec = clampValue(hz, FILTER_SLEW_MIN_HZ_PER_SEC, FILTER_SLEW_MAX_HZ_PER_SEC); markDirty(); notifyFilterSlewChanged(); }
-	void setDryMix(float mix) { dryMix = clampValue(mix, MIXER_DRY_MIN, MIXER_DRY_MAX); markDirty(); notifyDryMixChanged(); }
-	void setWetMix(float mix) { wetMix = clampValue(mix, MIXER_WET_MIN, MIXER_WET_MAX); markDirty(); notifyWetMixChanged(); }
-	void setCompressorEnabled(bool enabled) { compEnabled = enabled; markDirty(); notifyCompressorEnabledChanged(); }
-	void setCompressorAttackMs(float ms) { compAttackMs = clampValue(ms, MASTER_COMPRESSOR_ATTACK_MIN_MS, MASTER_COMPRESSOR_ATTACK_MAX_MS); markDirty(); notifyCompressorAttackChanged(); }
-	void setCompressorReleaseMs(float ms) { compReleaseMs = clampValue(ms, MASTER_COMPRESSOR_RELEASE_MIN_MS, MASTER_COMPRESSOR_RELEASE_MAX_MS); markDirty(); notifyCompressorReleaseChanged(); }
-	void setCompressorHoldMs(float ms) { compHoldMs = clampValue(ms, MASTER_COMPRESSOR_HOLD_MIN_MS, MASTER_COMPRESSOR_HOLD_MAX_MS); markDirty(); notifyCompressorHoldChanged(); }
-	void setCompressorThresholdPercent(float pct) { compThresholdPercent = clampValue(pct, MASTER_COMPRESSOR_THRESHOLD_MIN, MASTER_COMPRESSOR_THRESHOLD_MAX); markDirty(); notifyCompressorThresholdChanged(); }
-	void setCompressorRatio(float ratio) { compRatio = clampValue(ratio, MASTER_COMPRESSOR_RATIO_MIN, MASTER_COMPRESSOR_RATIO_MAX); markDirty(); notifyCompressorRatioChanged(); }
+	void setDelayTimeMs(float ms) override { delayTimeMs = clampValue(ms, DELAY_TIME_MIN_MS, DELAY_TIME_MAX_MS); markDirty(); notifyDelayTimeChanged(); }
+	void setDelayDepth(float d) override { delayDepth = clampValue(d, DELAY_DEPTH_MIN, DELAY_DEPTH_MAX); markDirty(); notifyDelayDepthChanged(); }
+	void setDelayFeedback(float fb) override { delayFeedback = clampValue(fb, DELAY_FEEDBACK_MIN, DELAY_FEEDBACK_MAX); markDirty(); notifyDelayFeedbackChanged(); }
+	void setFilterCutoffHz(float hz) override { filterCutoffHz = clampValue(hz, LOW_PASS_MIN_HZ, LOW_PASS_MAX_HZ); markDirty(); notifyFilterCutoffChanged(); }
+	void setFilterQ(float q) override { filterQ = clampValue(q, LOW_PASS_Q_MIN, LOW_PASS_Q_MAX); markDirty(); notifyFilterQChanged(); }
+	void setFilterSlewHzPerSec(float hz) override { filterSlewHzPerSec = clampValue(hz, FILTER_SLEW_MIN_HZ_PER_SEC, FILTER_SLEW_MAX_HZ_PER_SEC); markDirty(); notifyFilterSlewChanged(); }
+	void setDryMix(float mix) override { dryMix = clampValue(mix, MIXER_DRY_MIN, MIXER_DRY_MAX); markDirty(); notifyDryMixChanged(); }
+	void setWetMix(float mix) override { wetMix = clampValue(mix, MIXER_WET_MIN, MIXER_WET_MAX); markDirty(); notifyWetMixChanged(); }
+	void setCompressorEnabled(bool enabled) override { compEnabled = enabled; markDirty(); notifyCompressorEnabledChanged(); }
+	void setCompressorAttackMs(float ms) override { compAttackMs = clampValue(ms, MASTER_COMPRESSOR_ATTACK_MIN_MS, MASTER_COMPRESSOR_ATTACK_MAX_MS); markDirty(); notifyCompressorAttackChanged(); }
+	void setCompressorReleaseMs(float ms) override { compReleaseMs = clampValue(ms, MASTER_COMPRESSOR_RELEASE_MIN_MS, MASTER_COMPRESSOR_RELEASE_MAX_MS); markDirty(); notifyCompressorReleaseChanged(); }
+	void setCompressorHoldMs(float ms) override { compHoldMs = clampValue(ms, MASTER_COMPRESSOR_HOLD_MIN_MS, MASTER_COMPRESSOR_HOLD_MAX_MS); markDirty(); notifyCompressorHoldChanged(); }
+	void setCompressorThresholdPercent(float pct) override { compThresholdPercent = clampValue(pct, MASTER_COMPRESSOR_THRESHOLD_MIN, MASTER_COMPRESSOR_THRESHOLD_MAX); markDirty(); notifyCompressorThresholdChanged(); }
+	void setCompressorRatio(float ratio) override { compRatio = clampValue(ratio, MASTER_COMPRESSOR_RATIO_MIN, MASTER_COMPRESSOR_RATIO_MAX); markDirty(); notifyCompressorRatioChanged(); }
 private:
 	U8G2 &u8g2;
 	bool active = false;

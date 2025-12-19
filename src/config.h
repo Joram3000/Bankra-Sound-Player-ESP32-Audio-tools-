@@ -12,7 +12,7 @@
 #define DISPLAY_DRIVER_U8G2_SSD1306     0
 
 // Pick which display backend to compile (see ui.cpp for usage)
-#define DISPLAY_DRIVER DISPLAY_DRIVER_U8G2_SSD1306
+#define DISPLAY_DRIVER DISPLAY_DRIVER_ADAFRUIT_SSD1306
 constexpr int DISPLAY_WIDTH  = 128;
 constexpr int DISPLAY_HEIGHT = 64;
 constexpr int NUM_WAVEFORM_SAMPLES = DISPLAY_WIDTH * 2;
