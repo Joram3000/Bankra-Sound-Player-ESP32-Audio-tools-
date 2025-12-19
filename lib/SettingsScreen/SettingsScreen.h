@@ -11,6 +11,25 @@ public:
 	// Logical button roles shared by the physical button mapper.
 	enum class Button : uint8_t { Back = 0, Up = 1, Ok = 2, Left = 3, Down = 4, Right = 5 };
 
+	// Aggregated callbacks to reduce interface surface and keep backends simpler.
+	struct Callbacks {
+		std::function<void(float)> onZoom;
+		std::function<void(float)> onFilterCutoff;
+		std::function<void(float)> onFilterQ;
+		std::function<void(float)> onFilterSlew;
+		std::function<void(float)> onDelayTime;
+		std::function<void(float)> onDelayDepth;
+		std::function<void(float)> onDelayFeedback;
+		std::function<void(float)> onDryMix;
+		std::function<void(float)> onWetMix;
+		std::function<void(float)> onCompressorAttack;
+		std::function<void(float)> onCompressorRelease;
+		std::function<void(float)> onCompressorHold;
+		std::function<void(float)> onCompressorThreshold;
+		std::function<void(float)> onCompressorRatio;
+		std::function<void(bool)> onCompressorEnabled;
+	};
+
 	virtual ~ISettingsScreen() = default;
 
 	virtual void begin() = 0;
@@ -20,21 +39,7 @@ public:
 	virtual void update() = 0;
 	virtual bool onButton(Button button) = 0;
 
-	virtual void setZoomCallback(std::function<void(float)> cb) = 0;
-	virtual void setFilterCutoffCallback(std::function<void(float)> cb) = 0;
-	virtual void setFilterQCallback(std::function<void(float)> cb) = 0;
-	virtual void setFilterSlewCallback(std::function<void(float)> cb) = 0;
-	virtual void setDelayTimeCallback(std::function<void(float)> cb) = 0;
-	virtual void setDelayDepthCallback(std::function<void(float)> cb) = 0;
-	virtual void setDelayFeedbackCallback(std::function<void(float)> cb) = 0;
-	virtual void setDryMixCallback(std::function<void(float)> cb) = 0;
-	virtual void setWetMixCallback(std::function<void(float)> cb) = 0;
-	virtual void setCompressorAttackCallback(std::function<void(float)> cb) = 0;
-	virtual void setCompressorReleaseCallback(std::function<void(float)> cb) = 0;
-	virtual void setCompressorHoldCallback(std::function<void(float)> cb) = 0;
-	virtual void setCompressorThresholdCallback(std::function<void(float)> cb) = 0;
-	virtual void setCompressorRatioCallback(std::function<void(float)> cb) = 0;
-	virtual void setCompressorEnabledCallback(std::function<void(bool)> cb) = 0;
+	virtual void setCallbacks(const Callbacks& callbacks) = 0;
 
 	virtual float getZoom() const = 0;
 	virtual float getDelayTimeMs() const = 0;
@@ -46,7 +51,7 @@ public:
 	virtual float getDryMix() const = 0;
 	virtual float getWetMix() const = 0;
 	virtual bool getCompressorEnabled() const = 0;
-	virtual float getCompressorAttackMs() const = 0;
+	virtual float getCompressorAttackMs() const = 0; 
 	virtual float getCompressorReleaseMs() const = 0;
 	virtual float getCompressorHoldMs() const = 0;
 	virtual float getCompressorThresholdPercent() const = 0;

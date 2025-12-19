@@ -232,7 +232,7 @@ private:
   CallbackStream cbStream;
 
   // static instance pointer for callback forwarding (assumes single mixer)
-  static DryWetMixerStream* s_instance;
+  inline static DryWetMixerStream* s_instance = nullptr;
 
   // static callback invoked by CallbackStream; forwards to instance method
   static size_t staticUpdate(uint8_t* data, size_t len) {

@@ -21,7 +21,6 @@ WAVDecoder wavDecoder;
 AudioPlayer player(source, i2s, wavDecoder);
 DryWetMixerStream mixerStream;
 Delay delayEffect;
-DryWetMixerStream* DryWetMixerStream::s_instance = nullptr;
 
 // Display & scope (moved to ui module)
 #include "ui.h"
@@ -189,44 +188,46 @@ static void initSettingsScreen() {
   return;
 #endif
   settingsScreen->begin();
-  settingsScreen->setZoomCallback([](float zoomFactor) {
+
+  ISettingsScreen::Callbacks callbacks{};
+  callbacks.onZoom = [](float zoomFactor) {
     setScopeHorizZoom(zoomFactor);
-  });
-  settingsScreen->setDelayTimeCallback([](float durationMs) {
+  };
+  callbacks.onDelayTime = [](float durationMs) {
     currentDelayTimeMs = durationMs;
     delayEffect.setDuration(static_cast<uint32_t>(durationMs));
-  });
-  settingsScreen->setDelayDepthCallback([](float depth) {
+  };
+  callbacks.onDelayDepth = [](float depth) {
     currentDelayDepth = depth;
     delayEffect.setDepth(depth);
-  });
-  settingsScreen->setDelayFeedbackCallback([](float feedback) {
+  };
+  callbacks.onDelayFeedback = [](float feedback) {
     currentDelayFeedback = feedback;
     delayEffect.setFeedback(feedback);
-  });
-  settingsScreen->setFilterCutoffCallback([](float cutoffHz) {
+  };
+  callbacks.onFilterCutoff = [](float cutoffHz) {
     currentFilterCutoffHz = cutoffHz;
     applyFilterSwitchState(filterSwitchDebouncedState);
-  });
-  settingsScreen->setFilterQCallback([](float q) {
+  };
+  callbacks.onFilterQ = [](float q) {
     currentFilterQ = q;
     mixerStream.setInputLowPassQ(q);
-  });
-  settingsScreen->setFilterSlewCallback([](float hzPerSec) {
+  };
+  callbacks.onFilterSlew = [](float hzPerSec) {
     currentFilterSlewHzPerSec = hzPerSec;
     mixerStream.setInputLowPassSlewRate(hzPerSec);
-  });
+  };
   auto applyMix = []() {
     mixerStream.setMix(currentDryMix, currentWetMix);
   };
-  settingsScreen->setDryMixCallback([applyMix](float dry) {
+  callbacks.onDryMix = [applyMix](float dry) {
     currentDryMix = dry;
     applyMix();
-  });
-  settingsScreen->setWetMixCallback([applyMix](float wet) {
+  };
+  callbacks.onWetMix = [applyMix](float wet) {
     currentWetMix = wet;
     applyMix();
-  });
+  };
   auto rebuildCompressor = []() {
     mixerStream.configureMasterCompressor(currentCompAttackMs,
                                           currentCompReleaseMs,
@@ -235,30 +236,32 @@ static void initSettingsScreen() {
                                           currentCompRatio,
                                           currentCompEnabled);
   };
-  settingsScreen->setCompressorEnabledCallback([rebuildCompressor](bool enabled) {
+  callbacks.onCompressorEnabled = [rebuildCompressor](bool enabled) {
     currentCompEnabled = enabled;
     rebuildCompressor();
-  });
-  settingsScreen->setCompressorAttackCallback([rebuildCompressor](float attackMs) {
+  };
+  callbacks.onCompressorAttack = [rebuildCompressor](float attackMs) {
     currentCompAttackMs = static_cast<uint16_t>(attackMs);
     rebuildCompressor();
-  });
-  settingsScreen->setCompressorReleaseCallback([rebuildCompressor](float releaseMs) {
+  };
+  callbacks.onCompressorRelease = [rebuildCompressor](float releaseMs) {
     currentCompReleaseMs = static_cast<uint16_t>(releaseMs);
     rebuildCompressor();
-  });
-  settingsScreen->setCompressorHoldCallback([rebuildCompressor](float holdMs) {
+  };
+  callbacks.onCompressorHold = [rebuildCompressor](float holdMs) {
     currentCompHoldMs = static_cast<uint16_t>(holdMs);
     rebuildCompressor();
-  });
-  settingsScreen->setCompressorThresholdCallback([rebuildCompressor](float thresholdPercent) {
+  };
+  callbacks.onCompressorThreshold = [rebuildCompressor](float thresholdPercent) {
     currentCompThresholdPercent = static_cast<uint8_t>(thresholdPercent);
     rebuildCompressor();
-  });
-  settingsScreen->setCompressorRatioCallback([rebuildCompressor](float ratio) {
+  };
+  callbacks.onCompressorRatio = [rebuildCompressor](float ratio) {
     currentCompRatio = ratio;
     rebuildCompressor();
-  });
+  };
+
+  settingsScreen->setCallbacks(callbacks);
 
   settingsScreen->setZoom(DEFAULT_HORIZ_ZOOM);
   settingsScreen->setDelayTimeMs(currentDelayTimeMs);

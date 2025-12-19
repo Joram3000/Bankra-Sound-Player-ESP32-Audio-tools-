@@ -35,21 +35,7 @@ public:
 	explicit SettingsScreenU8g2(U8G2 &display)
 		: u8g2(display) {}
 
-	void setZoomCallback(std::function<void(float)> cb) override { zoomCallback = cb; }
-	void setFilterCutoffCallback(std::function<void(float)> cb) override { filterCutoffCallback = cb; }
-	void setFilterQCallback(std::function<void(float)> cb) override { filterQCallback = cb; }
-	void setFilterSlewCallback(std::function<void(float)> cb) override { filterSlewCallback = cb; }
-	void setDelayTimeCallback(std::function<void(float)> cb) override { delayTimeCallback = cb; }
-	void setDelayDepthCallback(std::function<void(float)> cb) override { delayDepthCallback = cb; }
-	void setDelayFeedbackCallback(std::function<void(float)> cb) override { delayFeedbackCallback = cb; }
-	void setDryMixCallback(std::function<void(float)> cb) override { dryMixCallback = cb; }
-	void setWetMixCallback(std::function<void(float)> cb) override { wetMixCallback = cb; }
-	void setCompressorAttackCallback(std::function<void(float)> cb) override { compAttackCallback = cb; }
-	void setCompressorReleaseCallback(std::function<void(float)> cb) override { compReleaseCallback = cb; }
-	void setCompressorHoldCallback(std::function<void(float)> cb) override { compHoldCallback = cb; }
-	void setCompressorThresholdCallback(std::function<void(float)> cb) override { compThresholdCallback = cb; }
-	void setCompressorRatioCallback(std::function<void(float)> cb) override { compRatioCallback = cb; }
-	void setCompressorEnabledCallback(std::function<void(bool)> cb) override { compEnabledCallback = cb; }
+	void setCallbacks(const Callbacks& cb) override { callbacks = cb; }
 
 	void begin() override {}
 
@@ -165,39 +151,25 @@ private:
 	float compThresholdPercent = MASTER_COMPRESSOR_THRESHOLD_PERCENT;
 	float compRatio = MASTER_COMPRESSOR_RATIO;
 
-	std::function<void(float)> zoomCallback;
-	std::function<void(float)> filterCutoffCallback;
-	std::function<void(float)> filterQCallback;
-	std::function<void(float)> filterSlewCallback;
-	std::function<void(float)> delayTimeCallback;
-	std::function<void(float)> delayDepthCallback;
-	std::function<void(float)> delayFeedbackCallback;
-	std::function<void(float)> dryMixCallback;
-	std::function<void(float)> wetMixCallback;
-	std::function<void(float)> compAttackCallback;
-	std::function<void(float)> compReleaseCallback;
-	std::function<void(float)> compHoldCallback;
-	std::function<void(float)> compThresholdCallback;
-	std::function<void(float)> compRatioCallback;
-	std::function<void(bool)> compEnabledCallback;
+	Callbacks callbacks;
 
 	void markDirty() { dirty = true; }
 
-	void notifyZoomChanged() { if (zoomCallback) zoomCallback(zoom); }
-	void notifyDelayTimeChanged() { if (delayTimeCallback) delayTimeCallback(delayTimeMs); }
-	void notifyDelayDepthChanged() { if (delayDepthCallback) delayDepthCallback(delayDepth); }
-	void notifyDelayFeedbackChanged() { if (delayFeedbackCallback) delayFeedbackCallback(delayFeedback); }
-	void notifyFilterCutoffChanged() { if (filterCutoffCallback) filterCutoffCallback(filterCutoffHz); }
-	void notifyFilterQChanged() { if (filterQCallback) filterQCallback(filterQ); }
-	void notifyFilterSlewChanged() { if (filterSlewCallback) filterSlewCallback(filterSlewHzPerSec); }
-	void notifyDryMixChanged() { if (dryMixCallback) dryMixCallback(dryMix); }
-	void notifyWetMixChanged() { if (wetMixCallback) wetMixCallback(wetMix); }
-	void notifyCompressorEnabledChanged() { if (compEnabledCallback) compEnabledCallback(compEnabled); }
-	void notifyCompressorAttackChanged() { if (compAttackCallback) compAttackCallback(compAttackMs); }
-	void notifyCompressorReleaseChanged() { if (compReleaseCallback) compReleaseCallback(compReleaseMs); }
-	void notifyCompressorHoldChanged() { if (compHoldCallback) compHoldCallback(compHoldMs); }
-	void notifyCompressorThresholdChanged() { if (compThresholdCallback) compThresholdCallback(compThresholdPercent); }
-	void notifyCompressorRatioChanged() { if (compRatioCallback) compRatioCallback(compRatio); }
+	void notifyZoomChanged() { if (callbacks.onZoom) callbacks.onZoom(zoom); }
+	void notifyDelayTimeChanged() { if (callbacks.onDelayTime) callbacks.onDelayTime(delayTimeMs); }
+	void notifyDelayDepthChanged() { if (callbacks.onDelayDepth) callbacks.onDelayDepth(delayDepth); }
+	void notifyDelayFeedbackChanged() { if (callbacks.onDelayFeedback) callbacks.onDelayFeedback(delayFeedback); }
+	void notifyFilterCutoffChanged() { if (callbacks.onFilterCutoff) callbacks.onFilterCutoff(filterCutoffHz); }
+	void notifyFilterQChanged() { if (callbacks.onFilterQ) callbacks.onFilterQ(filterQ); }
+	void notifyFilterSlewChanged() { if (callbacks.onFilterSlew) callbacks.onFilterSlew(filterSlewHzPerSec); }
+	void notifyDryMixChanged() { if (callbacks.onDryMix) callbacks.onDryMix(dryMix); }
+	void notifyWetMixChanged() { if (callbacks.onWetMix) callbacks.onWetMix(wetMix); }
+	void notifyCompressorEnabledChanged() { if (callbacks.onCompressorEnabled) callbacks.onCompressorEnabled(compEnabled); }
+	void notifyCompressorAttackChanged() { if (callbacks.onCompressorAttack) callbacks.onCompressorAttack(compAttackMs); }
+	void notifyCompressorReleaseChanged() { if (callbacks.onCompressorRelease) callbacks.onCompressorRelease(compReleaseMs); }
+	void notifyCompressorHoldChanged() { if (callbacks.onCompressorHold) callbacks.onCompressorHold(compHoldMs); }
+	void notifyCompressorThresholdChanged() { if (callbacks.onCompressorThreshold) callbacks.onCompressorThreshold(compThresholdPercent); }
+	void notifyCompressorRatioChanged() { if (callbacks.onCompressorRatio) callbacks.onCompressorRatio(compRatio); }
 
 	void adjustCurrentItem(int delta) {
 		auto coarseMult = [](float fine) { return fine * 5.0f; };
