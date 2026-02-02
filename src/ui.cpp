@@ -42,6 +42,7 @@ static int waveformIndex = 0;
 ScopeI2SStream scopeI2s(waveformBuffer, &waveformIndex, scopeDisplay.getMutex());
 
 bool initUi() {
+  Wire.begin(DISPLAY_I2C_SDA_PIN, DISPLAY_I2C_SCL_PIN);
 #if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
   Serial.println(F("[UI] Using U8g2 display backend"));
 #else

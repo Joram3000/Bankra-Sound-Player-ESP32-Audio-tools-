@@ -13,6 +13,8 @@
 #include "audio_mixer.h"
 #include "input.h"
 #include "settings_storage.h"
+#include <WiFi.h>
+#include "esp_bt.h"
 
 // Audio stack
 AudioSourceSD source("/", "wav");
@@ -353,6 +355,11 @@ void setup() {
   pinMode(SWITCH_PIN_SETTINGS_MODE, INPUT_PULLUP);
   bool settingsModeInit = (digitalRead(SWITCH_PIN_SETTINGS_MODE) == LOW);
   settingsModeRawState = settingsModeDebouncedState = settingsModeInit;
+
+
+  // Brown-out risico drastisch omlaag
+  WiFi.mode(WIFI_OFF);
+  btStop();
 
   initSd();
   initDisplay();

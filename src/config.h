@@ -12,44 +12,44 @@
 #define DISPLAY_DRIVER_U8G2_SSD1306     0
 
 // Pick which display backend to compile (see ui.cpp for usage)
-#define DISPLAY_DRIVER DISPLAY_DRIVER_ADAFRUIT_SSD1306
+#define DISPLAY_DRIVER DISPLAY_DRIVER_U8G2_SSD1306
 constexpr int DISPLAY_WIDTH  = 128;
 constexpr int DISPLAY_HEIGHT = 64;
 constexpr int NUM_WAVEFORM_SAMPLES = DISPLAY_WIDTH * 2;
 constexpr uint8_t DISPLAY_I2C_ADDRESS = 0x3C;
 constexpr bool DISPLAY_INVERT_COLORS = false;
 
+constexpr int DISPLAY_I2C_SDA_PIN = 21;
+constexpr int DISPLAY_I2C_SCL_PIN = 22;
+
 #if DISPLAY_DRIVER == DISPLAY_DRIVER_U8G2_SSD1306
-	// Pas deze macro's aan als je een andere U8g2 constructor nodig hebt
-	#ifndef DISPLAY_U8G2_CLASS
-		// Gebruik de SH1106 constructor voor DIYUSER 1.3 (SH1106) modules.
-		// Als je een echte SSD1306-module hebt, zet deze terug naar
-		// U8G2_SSD1306_128X64_NONAME_F_HW_I2C
-		#define DISPLAY_U8G2_CLASS U8G2_SH1106_128X64_NONAME_F_HW_I2C
-	#endif
-	#ifndef DISPLAY_U8G2_CTOR_ARGS
-		#define DISPLAY_U8G2_CTOR_ARGS U8G2_R0, U8X8_PIN_NONE
-	#endif
+  #ifndef DISPLAY_U8G2_CLASS
+    #define DISPLAY_U8G2_CLASS U8G2_SH1106_128X64_NONAME_F_HW_I2C  // SH1106 ctor
+  #endif
+  #ifndef DISPLAY_U8G2_CTOR_ARGS
+    #define DISPLAY_U8G2_CTOR_ARGS U8G2_R0, U8X8_PIN_NONE
+  #endif
 #endif
 
 // -----------------------------------------------------------------------------
 // User controls (buttons + SN74HC151 multiplexer)
 // -----------------------------------------------------------------------------
-constexpr std::array<uint8_t, 6> BUTTON_CHANNELS = { 4,5,6, 3, 2, 1};
+constexpr std::array<uint8_t, 6> BUTTON_CHANNELS = {1, 2, 3, 4, 5, 6}; 
+constexpr uint8_t SWITCH_CHANNEL_DELAY_SEND = 7; 
+constexpr uint8_t SWITCH_CHANNEL_FILTER_ENABLE = 0; 
 constexpr size_t BUTTON_COUNT = BUTTON_CHANNELS.size();
 constexpr bool BUTTONS_ACTIVE_LOW = true;
 
 // SN74HC151 select pins (A = LSB) and shared output
 constexpr int INPUT_MUX_PIN_A = 13;
-constexpr int INPUT_MUX_PIN_B = 4;
+constexpr int INPUT_MUX_PIN_B = 25;
 constexpr int INPUT_MUX_PIN_C = 16;
+
 constexpr int INPUT_MUX_PIN_Y = 17;
 constexpr int INPUT_MUX_PIN_EN = -1; // tie to GND on PCB if < 0
-constexpr uint8_t INPUT_MUX_SETTLE_TIME_US = 5;
+constexpr uint8_t INPUT_MUX_SETTLE_TIME_US = 25;
 
 // Channel mapping for non-sampler controls routed through the mux
-constexpr uint8_t SWITCH_CHANNEL_DELAY_SEND = 7;
-constexpr uint8_t SWITCH_CHANNEL_FILTER_ENABLE = 0;
 constexpr int SWITCH_PIN_SETTINGS_MODE = 35; // dedicated pin (not muxed)
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 20;
 constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
@@ -57,7 +57,7 @@ constexpr uint32_t BUTTON_RETRIGGER_GUARD_MS = 20;
 constexpr uint32_t EFFECT_TOGGLE_FADE_MS = 6;
 constexpr uint32_t SAMPLE_ATTACK_FADE_MS = 10;
 constexpr int POT_PIN = 34;
-constexpr bool POT_POLARITY_INVERTED = false;
+constexpr bool POT_POLARITY_INVERTED = true;
 constexpr uint32_t VOLUME_READ_INTERVAL_MS = 30;
 constexpr float VOLUME_DEADBAND = 0.12f;
 
@@ -108,7 +108,7 @@ constexpr float FILTER_SLEW_STEP_HZ_PER_SEC     = 100.0f;
 constexpr float FILTER_SLEW_DEFAULT_HZ_PER_SEC  = 8000.0f;
 
 // Master bus compression (gentle glue on final output)
-constexpr bool     MASTER_COMPRESSOR_ENABLED          = true;
+constexpr bool     MASTER_COMPRESSOR_ENABLED          = false;
 constexpr uint16_t MASTER_COMPRESSOR_ATTACK_MS        = 12;
 constexpr uint16_t MASTER_COMPRESSOR_RELEASE_MS       = 70;
 constexpr uint16_t MASTER_COMPRESSOR_HOLD_MS          = 12;
